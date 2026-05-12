@@ -3,7 +3,7 @@ import { Truck, Plus, X, Calendar, Users, ChevronDown, ChevronUp, ChevronRight, 
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { storageService } from './services/storageService';
-import { collection, onSnapshot, query } from 'firebase/firestore';
+import { collection, onSnapshot, query, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from './lib/firebase';
 
 // --- DATA & TYPES ---
@@ -197,7 +197,7 @@ interface BauExpedicao {
 // --- AUTHENTICATION ---
 const USERS: Record<string, { password: string; role: string }> = {
   '3cmot': { password: 'frota3c28', role: 'veiculos' },
-  'gr3c': { password: 'grsantaluzia3c7', role: 'checklist_escala' },
+  'gr3c': { password: 'grsantaluzia3c7', role: 'admin' },
   '3clog': { password: 'grlogistica', role: 'docas' },
   'jeff': { password: '#trescafe27', role: 'admin' },
 };
@@ -954,9 +954,7 @@ const ExpedicaoShiftChart = ({ data }: { data: FrotaItem[] }) => {
 
 function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; currentUser: string }) {
   const [isLocked] = useState(false);
-  const [messages, setMessages] = useState<{ id: number; user: string; text: string; time: string; isMe: boolean }[]>([
-    { id: 1, user: 'Sistema', text: `Bem-vindo ao chat, ${currentUser}!`, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), isMe: false }
-  ]);
+  const [messages, setMessages] = useState<{ id: string; user: string; text: string; time: string; isMe: boolean }[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -966,31 +964,40 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
 
   useEffect(scrollToBottom, [messages]);
 
-  const handleSendMessage = (e: FormEvent) => {
+  useEffect(() => {
+    const q = query(collection(db, 'chat_geral'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+        const fetchedMessages = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        } as any)).sort((a: any, b: any) => a.timestamp?.seconds - b.timestamp?.seconds);
+        
+        setMessages(fetchedMessages.map((msg: any) => ({
+            id: msg.id,
+            user: msg.usuario,
+            text: msg.texto,
+            time: msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '',
+            isMe: msg.id_usuario === currentUser
+        })));
+    });
+    return () => unsubscribe();
+  }, [currentUser]);
+
+  const handleSendMessage = async (e: FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim()) return;
 
-    const msg = {
-      id: Date.now(),
-      user: currentUser,
-      text: newMessage,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      isMe: true
-    };
-
-    setMessages(prev => [...prev, msg]);
-    setNewMessage('');
-
-    // Simulate response
-    setTimeout(() => {
-      setMessages(prev => [...prev, {
-        id: Date.now() + 1,
-        user: 'Bot',
-        text: 'Mensagem recebida! Em breve um operador responderá.',
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        isMe: false
-      }]);
-    }, 1000);
+    try {
+        await addDoc(collection(db, 'chat_geral'), {
+            texto: newMessage,
+            usuario: currentUser,
+            id_usuario: currentUser,
+            timestamp: serverTimestamp()
+        });
+        setNewMessage('');
+    } catch (error) {
+        console.error('Error sending message:', error);
+    }
   };
 
 
