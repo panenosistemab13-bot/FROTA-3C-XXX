@@ -965,7 +965,7 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
   useEffect(scrollToBottom, [messages]);
 
   useEffect(() => {
-    const q = query(collection(db, 'chat_geral'));
+    const q = query(collection(db, 'chat_messages'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const fetchedMessages = snapshot.docs.map(doc => ({
             id: doc.id,
@@ -988,7 +988,7 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
     if (!newMessage.trim()) return;
 
     try {
-        await addDoc(collection(db, 'chat_geral'), {
+        await addDoc(collection(db, 'chat_messages'), {
             texto: newMessage,
             usuario: currentUser,
             id_usuario: currentUser,
@@ -3049,13 +3049,11 @@ function DocasPage({ setPage, currentUser }: { setPage: (page: any) => void; cur
     setExpandedId(prev => prev === id ? null : id);
   };
 
-  const fetchDocasData = () => {
+  const fetchDocas = () => {
     setLoading(true);
-    const q = query(collection(db, 'escala_items'));
-    const unsubscribe = onSnapshot(q, async (querySnapshot) => {
+    const unsubscribe = storageService.subscribeToDocas(async (allItems) => {
       try {
         const groups = await storageService.getScaleGroups();
-        const allItems = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as EscalaItem));
         setAllItems(allItems);
         
         const openGroupIds = groups.filter(g => g.status === 'Open').map(g => g.id);
@@ -3097,7 +3095,7 @@ function DocasPage({ setPage, currentUser }: { setPage: (page: any) => void; cur
   };
 
   useEffect(() => {
-    const unsubscribe = fetchDocasData();
+    const unsubscribe = fetchDocas();
     return () => unsubscribe();
   }, []);
 

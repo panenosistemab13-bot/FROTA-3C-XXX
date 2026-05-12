@@ -1,6 +1,6 @@
 
 import { db } from '../lib/firebase';
-import { collection, getDocs, doc, setDoc, deleteDoc, query } from "firebase/firestore";
+import { collection, getDocs, doc, setDoc, deleteDoc, query, onSnapshot } from "firebase/firestore";
 
 const COLLECTIONS = {
   GROUPS: 'scale_groups',
@@ -82,5 +82,14 @@ export const storageService = {
   async clearNotifications() {
     const querySnapshot = await getDocs(collection(db, COLLECTIONS.NOTIFICATIONS));
     await Promise.all(querySnapshot.docs.map(doc => deleteDoc(doc.ref)));
+  },
+
+  subscribeToDocas(callback: (items: any[]) => void) {
+    const q = query(collection(db, COLLECTIONS.ESCALA));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+        const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        callback(items);
+    });
+    return unsubscribe;
   }
 };
