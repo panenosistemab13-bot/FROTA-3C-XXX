@@ -1,0 +1,56 @@
+{
+  "entities": {
+    "scaleGroup": {
+      "title": "Scale Group",
+      "description": "Group for fleet scaling",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" }
+      }
+    },
+    "escalaItem": {
+      "title": "Escala Item",
+      "description": "Item on the schedule",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "cavalo": { "type": "string" }
+      }
+    },
+     "checklist": {
+      "title": "Checklist",
+      "description": "Checklist for vehicle",
+      "type": "object",
+      "properties": {
+         "placa": { "type": "string" }
+      }
+     },
+     "notification": {
+         "title": "Notification",
+         "description": "System notification",
+         "type": "object",
+         "properties": {
+             "id": { "type": "string" }
+         }
+     }
+  },
+  "firestore": {
+    "/scale_groups/{groupId}": {
+      "schema": "scaleGroup",
+      "description": "Group for fleet scaling"
+    },
+    "/escala_items/{itemId}": {
+      "schema": "escalaItem",
+      "description": "Item on the schedule"
+    },
+    "/checklists/{placa}": {
+      "schema": "checklist",
+      "description": "Checklist for vehicle"
+    },
+    "/notifications/{notifId}": {
+      "schema": "notification",
+      "description": "System notification"
+    }
+  }
+}

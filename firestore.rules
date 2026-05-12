@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global helpers
+    function isSignedIn() { return request.auth != null; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    match /scale_groups/{groupId} {
+      allow list, get: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(groupId);
+      allow update: if isSignedIn() && incoming().id == existing().id;
+      allow delete: if isSignedIn();
+    }
+    
+    match /escala_items/{itemId} {
+      allow list, get: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(itemId);
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+    
+    match /checklists/{placa} {
+      allow list, get: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(placa);
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+    
+    match /notifications/{notifId} {
+        allow list, get: if isSignedIn();
+        allow create: if isSignedIn();
+        allow delete: if isSignedIn();
+    }
+  }
+}

@@ -1,0 +1,57 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Modern Slate & Wine Palette */
+  --color-slate-950: #020617; /* Fundo Principal */
+  --color-slate-900: #0f172a; /* Cards / Sidebar */
+  --color-slate-800: #1e293b; /* Hover / Borders */
+  --color-cyan-500: #F43F5E; /* Primary Action (Vinho Claro) */
+  --color-emerald-500: #10b981; /* Secondary Accent */
+  
+  /* Mantendo compatibilidade com nomes antigos para evitar quebra imediata, mas mapeando para novas cores */
+  --color-coffee-dark: var(--color-slate-950);
+  --color-coffee-red: var(--color-cyan-500);
+  --color-coffee-yellow: var(--color-emerald-500);
+  --color-coffee-cream: #F1F5F9;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-950 text-white antialiased font-sans;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-slate-950);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-slate-800);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-cyan-500);
+}
+
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+.animate-marquee {
+  display: flex;
+  animation: marquee 30s linear infinite;
+}
+
+.recharts-responsive-container {
+  min-height: 300px !important;
+  min-width: 100% !important;
+}
