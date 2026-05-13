@@ -263,6 +263,8 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return;
 
+    console.log('[FIRESTORE] Notificações ativas: ouvindo mudanças no banco (Badges)...');
+
     // 1. Checklist badges (Negativados or Vencidos)
     const unsubChecklist = onSnapshot(collection(db, 'checklists'), (snapshot) => {
       const pending = snapshot.docs.filter(doc => {
@@ -270,7 +272,7 @@ export default function App() {
         return data.status === 'Negativado' || data.status === 'Checklist Vencido';
       }).length;
       setBadges(prev => ({ ...prev, checklist: pending }));
-    });
+    }, (error) => console.error('[FIRESTORE] Badge Checklist Error:', error));
 
     // 2. Docas & Veiculos (from Escala Items in Open scales)
     let unsubEscala: () => void = () => {};
@@ -295,8 +297,8 @@ export default function App() {
         ).length;
         
         setBadges(prev => ({ ...prev, docas: occupied, veiculos: pendingVehicles }));
-      });
-    });
+      }, (error) => console.error('[FIRESTORE] Badge Escala Error:', error));
+    }, (error) => console.error('[FIRESTORE] Badge Groups Error:', error));
 
     // 3. Chat unread count
     const lastTString = localStorage.getItem(`chat_last_read_${currentUser}`) || '0';
@@ -318,13 +320,22 @@ export default function App() {
         }).length;
         setBadges(prev => ({ ...prev, chat: unread }));
       }
-    });
+    }, (error) => console.error('[FIRESTORE] Badge Chat Error:', error));
+
+    // Reforço para PWA: Re-sync on visibility change
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[PWA] App reaberto: verificando conexão Firestore...');
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       unsubChecklist();
       unsubGroups();
       unsubEscala();
       unsubChat();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [currentUser, page]);
 
@@ -757,6 +768,7 @@ function DashboardPage({ onNavigate, onLogout, currentUser, canEdit }: { onNavig
   }, [soundEnabled]);
 
   useEffect(() => {
+    console.log('[FIRESTORE] Notificações ativas: ouvindo mudanças no banco...');
     const q = query(
       collection(db, 'notifications'),
       where('read', '==', false),
@@ -801,6 +813,8 @@ function DashboardPage({ onNavigate, onLogout, currentUser, canEdit }: { onNavig
 
       setNotifications(fetchedDocs);
       isInitialLoad.current = false;
+    }, (error) => {
+      console.error('[FIRESTORE] Erro no listener de notificações:', error);
     });
     return () => unsubscribe();
   }, [soundEnabled]);

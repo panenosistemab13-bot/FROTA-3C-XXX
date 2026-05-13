@@ -14,7 +14,7 @@ export default defineConfig(({mode}) => {
         registerType: 'autoUpdate',
         includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
         manifest: {
-          name: 'Frota 3C - Controle Operacional',
+          name: 'Frota 3C',
           short_name: 'Frota 3C',
           description: 'Sistema Integrado de Controle de Frota e Logística 3C',
           theme_color: '#8B1212',
@@ -69,6 +69,10 @@ export default defineConfig(({mode}) => {
                   statuses: [0, 200]
                 }
               }
+            },
+            {
+              urlPattern: /^https:\/\/(firestore|identitytoolkit|securetoken)\.googleapis\.com\/.*/i,
+              handler: 'NetworkOnly'
             }
           ]
         }
