@@ -1,9 +1,9 @@
 import { useState, useEffect, FormEvent, ChangeEvent, useMemo, Fragment, useRef } from 'react';
-import { Truck, Plus, X, Calendar, Users, ChevronDown, ChevronUp, ChevronRight, CheckCircle, XCircle, AlertTriangle, Wrench, Home, MoveRight, Send, ChevronsLeft, ChevronRight, Pencil, BookOpen, History, Ship, Archive, LayoutDashboard, PieChart as PieChartIcon, Search, Shield, Trash2, LogOut, MessageSquare, Lightbulb, Activity, FileText } from 'lucide-react';
+import { Truck, Plus, X, Calendar, Users, ChevronDown, ChevronUp, ChevronRight, CheckCircle, XCircle, AlertTriangle, Wrench, Home, MoveRight, Send, ChevronsLeft, ChevronsRight, Pencil, BookOpen, History, Ship, Archive, LayoutDashboard, PieChart as PieChartIcon, Search, Shield, Trash2, LogOut, MessageSquare, Lightbulb, Activity, FileText } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { storageService } from './services/storageService';
-import { collection, onSnapshot, query, addDoc, serverTimestamp, orderBy, limit, where, deleteDoc, doc } from 'firebase/firestore';
+import { collection, onSnapshot, query, addDoc, serverTimestamp, orderBy, limit, where, deleteDoc, doc, getDocs } from 'firebase/firestore';
 import { db } from './lib/firebase';
 
 // --- DATA & TYPES ---
@@ -78,17 +78,9 @@ const playNotificationSound = (type: 'success' | 'info' | 'warning' | 'danger' |
 };
 
 const addNotification = async (type: AppNotification['type'], message: string) => {
-  const newNotification: AppNotification = {
-    id: Date.now().toString(),
-    type,
-    message,
-    timestamp: new Date().toISOString(),
-    read: false
-  };
-  
   try {
-    await storageService.saveNotification(newNotification);
-    window.dispatchEvent(new Event('storage'));
+    await storageService.addNotification(message, type);
+    // Remove local storage event, handled by realtime listeners now
     playNotificationSound(type);
   } catch (error) {
     console.error('Failed to save notification:', error);
@@ -297,13 +289,36 @@ function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: string) => void 
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
-  const handleLogin = (e: FormEvent) => {
+  const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
-    const user = USERS[username];
-    if (user) {
+    let authenticated = false;
+
+    try {
+      const q = query(collection(db, 'users'), where('username', '==', username));
+      const querySnapshot = await getDocs(q);
+      
+      if (!querySnapshot.empty) {
+        const userDoc = querySnapshot.docs[0].data();
+        if (userDoc.password === password) {
+          authenticated = true;
+        }
+      }
+    } catch (err) {
+      console.error("Firestore query failed, falling back to hardcoded users:", err);
+    }
+    
+    // Fallback for hardcoded users if not in db or query failed
+    if (!authenticated) {
+      const user = USERS[username];
+      if (user && user.password === password) {
+        authenticated = true;
+      }
+    }
+
+    if (authenticated) {
       onLoginSuccess(username);
     } else {
-      setError('Usuário inválido.');
+      setError('Usuário ou senha incorretos.');
     }
   };
 
@@ -386,10 +401,12 @@ function VeiculosPage({ setPage, currentUser }: { setPage: (page: any) => void; 
   const fetchEscala = async () => {
     setLoading(true);
     try {
-      const [allItems, groups] = await Promise.all([
+      const [_allItems, _groups] = await Promise.all([
         storageService.getEscalaItems(),
         storageService.getScaleGroups()
       ]);
+      const allItems = _allItems as EscalaItem[];
+      const groups = _groups as ScaleGroup[];
       const openGroupIds = groups.filter(g => g.status === 'Open').map(g => g.id);
       const filtered = allItems.filter(item => openGroupIds.includes(item.scale_group_id));
       setEscalaItems(filtered.sort((a, b) => b.id - a.id));
@@ -1223,29 +1240,90 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
   const [searchTermDate, setSearchTermDate] = useState('');
 
   useEffect(() => { 
-    fetchChecklistVencido();
-    if (view === 'list') {
-      fetchScaleGroups();
-    } else if (view === 'details' && activeGroupId) {
-      fetchEscala(activeGroupId);
-      fetchChecklists();
-    } else if (view === 'create') {
-      fetchChecklists();
-    }
+    setLoading(true);
+    let unsubGroups: () => void;
+    let unsubEscala: () => void;
+    let unsubChecklists: () => void;
+
+    const todayISO = new Date().toISOString().split('T')[0];
+
+    // Listen Escala Items
+    const qEscala = collection(db, 'escala_items');
+    unsubEscala = onSnapshot(qEscala, (snapshot) => {
+      const allItems = snapshot.docs.map(doc => ({ id: Number(doc.id), ...doc.data() })) as EscalaItem[];
+      
+      const itemsVencido = allItems.filter(i => i.veiculo_atrelado === 'Sim').sort((a, b) => b.id - a.id);
+      setChecklistVencidoItems(itemsVencido);
+
+      if (activeGroupId) {
+        const groupItems = allItems.filter(i => i.scale_group_id === activeGroupId).sort((a, b) => b.id - a.id);
+        setEscalaItems(groupItems);
+      }
+    });
+
+    // Listen Scale Groups
+    const qGroups = collection(db, 'scale_groups');
+    unsubGroups = onSnapshot(qGroups, async (snapshot) => {
+      const groups = snapshot.docs.map(doc => ({ id: Number(doc.id), ...doc.data() })) as ScaleGroup[];
+      
+      // Auto archive
+      const newGroups = groups.map((g) => {
+         if (g.status === 'Open' && g.data_escala < todayISO) {
+           const archived = { ...g, status: 'Archived' as const };
+           storageService.saveScaleGroup(archived);
+           return archived;
+         }
+         return g;
+      });
+
+      let filteredGroups = newGroups.filter(g => 
+        activeTab === 'semanal' ? g.status === 'Archived' : (g.status === 'Open' && g.data_escala >= todayISO)
+      );
+
+      if (searchTermDate) {
+        filteredGroups = filteredGroups.filter(g => g.data_escala === searchTermDate);
+      }
+
+      if (searchTermPlate) {
+        const itemsSnap = await getDocs(collection(db, 'escala_items'));
+        const allItems = itemsSnap.docs.map(doc => ({ ...doc.data() })) as any[];
+        const groupIdsWithPlate = allItems
+          .filter(i => 
+            i.cavalo.toLowerCase().includes(searchTermPlate.toLowerCase()) ||
+            i.bau1.toLowerCase().includes(searchTermPlate.toLowerCase()) ||
+            (i.bau2 && i.bau2.toLowerCase().includes(searchTermPlate.toLowerCase()))
+          )
+          .map(i => i.scale_group_id);
+        
+        filteredGroups = filteredGroups.filter(g => groupIdsWithPlate.includes(g.id));
+      }
+
+      const allItemsSnap = await getDocs(collection(db, 'escala_items'));
+      const allItemsCount = allItemsSnap.docs.map(doc => ({ ...doc.data() })) as any[];
+      const groupsWithCount = filteredGroups.map(g => ({
+        ...g,
+        items_count: allItemsCount.filter(i => i.scale_group_id === g.id && !i.saved && i.veiculo_atrelado !== 'Sim').length
+      })).sort((a, b) => b.id - a.id);
+
+      setScaleGroups(groupsWithCount);
+      setLoading(false);
+    });
+
+    // Listen Checklists
+    const qChecklists = collection(db, 'checklists');
+    unsubChecklists = onSnapshot(qChecklists, (snapshot) => {
+       const docs = snapshot.docs.map(doc => ({ placa: doc.id, ...doc.data() })) as any;
+       setChecklists(docs);
+    });
+
+    return () => {
+      if(unsubGroups) unsubGroups();
+      if(unsubEscala) unsubEscala();
+      if(unsubChecklists) unsubChecklists();
+    };
   }, [view, activeGroupId, activeTab, searchTermPlate, searchTermDate]);
 
-  const fetchChecklistVencido = async () => {
-    setLoading(true);
-    try {
-      const allItems = await storageService.getEscalaItems();
-      const items = allItems.filter(i => i.veiculo_atrelado === 'Sim').sort((a, b) => b.id - a.id);
-      setChecklistVencidoItems(items);
-    } catch (error) {
-      console.error('Failed to fetch checklist vencido:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const fetchChecklistVencido = () => {};
 
   const filteredItems = useMemo(() => {
     return escalaItems.filter(item => {
@@ -1260,47 +1338,7 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
     });
   }, [escalaItems, searchTerm, filterStatus]);
 
-  const fetchScaleGroups = async () => {
-    setLoading(true);
-    try {
-      const [groups, allItems] = await Promise.all([
-        storageService.getScaleGroups(),
-        storageService.getEscalaItems()
-      ]);
-      
-      let filteredGroups = groups.filter(g => 
-        activeTab === 'semanal' ? g.status === 'Archived' : g.status === 'Open'
-      );
-
-      if (searchTermDate) {
-        filteredGroups = filteredGroups.filter(g => g.data_escala === searchTermDate);
-      }
-
-      if (searchTermPlate) {
-        const groupIdsWithPlate = allItems
-          .filter(i => 
-            i.cavalo.toLowerCase().includes(searchTermPlate.toLowerCase()) ||
-            i.bau1.toLowerCase().includes(searchTermPlate.toLowerCase()) ||
-            (i.bau2 && i.bau2.toLowerCase().includes(searchTermPlate.toLowerCase()))
-          )
-          .map(i => i.scale_group_id);
-        
-        filteredGroups = filteredGroups.filter(g => groupIdsWithPlate.includes(g.id));
-      }
-      
-      const groupsWithCount = filteredGroups.map(g => ({
-        ...g,
-        items_count: allItems.filter(i => i.scale_group_id === g.id).length
-      })).sort((a, b) => b.id - a.id);
-      
-      setScaleGroups(groupsWithCount);
-    } catch (error) {
-      console.error('Failed to fetch scale groups:', error);
-      addNotification('danger', 'Erro ao carregar escalas.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const fetchScaleGroups = () => {};
 
   const handleArchiveScale = async (e: any, groupId: number) => {
     e.stopPropagation();
@@ -1327,10 +1365,14 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
       alert('Por favor, preencha a placa do Cavalo e do MAIS PESADO.');
       return;
     }
+    if (tipoVeiculo === 'Rodo Trem' && !bau2) {
+      alert('Por favor, preencha a placa do MAIS LEVE para Rodo Trem.');
+      return;
+    }
 
-    const cavaloUpper = cavalo.toUpperCase().trim();
-    const bau1Upper = bau1.toUpperCase().trim();
-    const bau2Upper = (tipoVeiculo === 'Rodo Trem' && bau2) ? bau2.toUpperCase().trim() : undefined;
+    const cavaloUpper = cavalo.toUpperCase().trim() || "";
+    const bau1Upper = bau1.toUpperCase().trim() || "";
+    const bau2Upper = (tipoVeiculo === 'Rodo Trem' && bau2) ? bau2.toUpperCase().trim() : "";
 
     // Check for duplicates within the current input
     if (cavaloUpper === bau1Upper || (bau2Upper && (cavaloUpper === bau2Upper || bau1Upper === bau2Upper))) {
@@ -1369,7 +1411,7 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
     }
 
     const checklists = await storageService.getChecklists();
-    const checklistItem = checklists.find((c: any) => c.placa === cavaloUpper);
+    const checklistItem: any = checklists.find((c: any) => c.placa === cavaloUpper);
     const checklistStatus = checklistItem ? getEffectiveStatus(checklistItem.status, checklistItem.validade) : 'Checklist OK';
 
     const newTempItem = {
@@ -1414,7 +1456,21 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
         created_at: new Date().toISOString()
       }));
 
-      await storageService.saveEscalaItems(newItems);
+      for (const item of newItems) {
+        // Just replacing undefined with "" as a failsafe
+        Object.keys(item).forEach(key => {
+          if ((item as any)[key] === undefined) {
+             (item as any)[key] = "";
+          }
+        });
+      }
+
+      try {
+        await storageService.saveEscalaItems(newItems);
+      } catch (err) {
+        console.error("Erro salvando os data items:", newItems, err);
+        throw err;
+      }
       
       setTempVehicles([]);
       setCavalo(''); setBau1(''); setBau2(''); setDestino('');
@@ -1425,24 +1481,13 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
       alert('Escala criada com sucesso!');
     } catch (error) {
       console.error('Failed to create scale:', error);
-      alert('Erro ao criar escala.');
+      alert('Erro ao criar escala. Verifique o console para detalhes.');
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchEscala = async (groupId: number) => {
-    setLoading(true);
-    try {
-      const allItems = await storageService.getEscalaItems();
-      const groupItems = allItems.filter(i => i.scale_group_id === groupId).sort((a, b) => b.id - a.id);
-      setEscalaItems(groupItems);
-    } catch (error) {
-      console.error('Failed to fetch escala for group:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const fetchEscala = (groupId: number) => {};
 
   const handleArchiveGroup = async () => {
     if (!window.confirm('Deseja salvar e arquivar esta escala? Ela será movida para o Semanal.')) return;
@@ -1493,14 +1538,7 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
     }
   };
 
-  const fetchChecklists = async () => {
-    try {
-      const data = await storageService.getChecklists();
-      setChecklists(data);
-    } catch (error) {
-      console.error('Failed to fetch checklists:', error);
-    }
-  };
+  const fetchChecklists = () => {};
 
   const getEffectiveStatus = (status: string, validade: string | null) => {
     const now = new Date();
@@ -1517,8 +1555,12 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
       alert('Por favor, preencha a placa do Cavalo e do MAIS PESADO.');
       return;
     }
+    if (tipoVeiculo === 'Rodo Trem' && !bau2) {
+      alert('Por favor, preencha a placa do MAIS LEVE para Rodo Trem.');
+      return;
+    }
 
-    const cavaloUpper = cavalo.toUpperCase().trim();
+    const cavaloUpper = cavalo.toUpperCase().trim() || "";
     if (!editingId && escalaItems.some(item => item.cavalo === cavaloUpper)) {
       alert('Esta placa de cavalo já foi adicionada na escala.');
       return;
@@ -1531,12 +1573,12 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
       const checklistStatus = checklistItem ? getEffectiveStatus(checklistItem.status, checklistItem.validade) : 'Checklist OK';
 
       const entryData = {
-        scale_group_id: activeGroupId!,
+        scale_group_id: activeGroupId! || "",
         cavalo: cavaloUpper,
-        bau1: bau1.toUpperCase().trim(),
-        bau2: (tipoVeiculo === 'Rodo Trem' && bau2) ? bau2.toUpperCase().trim() : undefined,
-        tipo_veiculo: tipoVeiculo,
-        data_escala: activeGroupDate,
+        bau1: bau1.toUpperCase().trim() || "",
+        bau2: (tipoVeiculo === 'Rodo Trem' && bau2) ? bau2.toUpperCase().trim() : "",
+        tipo_veiculo: tipoVeiculo || "",
+        data_escala: activeGroupDate || "",
         checklist_status: checklistStatus as any,
       };
 
@@ -1590,7 +1632,7 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
         onClick={() => { setActiveTab('semanal'); setView('list'); }} 
         className={`pb-2 px-4 font-black text-[10px] uppercase tracking-widest transition-all ${activeTab === 'semanal' ? 'text-coffee-red border-b-2 border-coffee-red' : 'text-slate-500 hover:text-white'}`}
       >
-        Semanal
+        Histórico/Arquivo
       </button>
       <button 
         onClick={() => { setActiveTab('checklist_vencido'); setView('list'); }} 
@@ -1662,6 +1704,59 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
   }
 
   if (view === 'list') {
+    const renderGroupCard = (group: ScaleGroup) => (
+      <motion.div 
+        key={group.id}
+        whileHover={{ y: -3 }}
+        className={`bg-white/5 border border-white/10 p-6 rounded-[2rem] cursor-pointer group transition-all ${activeTab === 'semanal' ? 'hover:border-amber-500/50' : 'hover:border-coffee-red/50'}`}
+        onClick={(e) => {
+          if ((e.target as HTMLElement).closest('button')) return;
+          setActiveGroupId(group.id);
+          setActiveGroupDate(group.data_escala);
+          setView('details');
+        }}
+      >
+        <div className="flex justify-between items-start mb-4">
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${activeTab === 'semanal' ? 'bg-amber-500/10 text-amber-500 group-hover:bg-amber-500 group-hover:text-white' : 'bg-coffee-red/10 text-coffee-red group-hover:bg-coffee-red group-hover:text-white'}`}>
+            <Calendar size={20} />
+          </div>
+          <div className="flex items-center gap-2">
+            <div className={`px-2.5 py-0.5 rounded-full border text-[9px] font-black uppercase tracking-widest ${group.status === 'Archived' ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'}`}>
+              {group.status === 'Archived' ? 'Arquivado' : 'Em Aberto'}
+            </div>
+            {group.status !== 'Archived' && canEdit && (
+              <button
+                onClick={(e) => handleArchiveScale(e, group.id)}
+                className="w-6 h-6 rounded-full bg-white/5 hover:bg-amber-500/20 text-slate-400 hover:text-amber-500 flex items-center justify-center transition-colors"
+                title="Arquivar Escala"
+              >
+                <Archive size={12} />
+              </button>
+            )}
+            {canEdit && (
+              <button
+                onClick={(e) => handleDeleteGroup(group.id, e as unknown as React.MouseEvent)}
+                className="w-6 h-6 rounded-full bg-white/5 hover:bg-red-500/20 text-slate-400 hover:text-red-500 flex items-center justify-center transition-colors"
+                title="Excluir Escala"
+              >
+                <Trash2 size={12} />
+              </button>
+            )}
+          </div>
+        </div>
+        <h3 className="text-xl font-black text-white tracking-tight mb-1">
+          {new Date(group.data_escala + 'T00:00:00').toLocaleDateString('pt-BR')}
+        </h3>
+        <p className="text-slate-500 text-[9px] font-bold uppercase tracking-widest mb-4">
+          Escala #{group.id.toString().padStart(4, '0')}
+        </p>
+        <div className="flex items-center gap-2 text-slate-400 text-[10px] font-medium">
+          <Truck size={14} />
+          <span>{group.items_count} Veículos registrados</span>
+        </div>
+      </motion.div>
+    );
+
     return (
       <div className="p-4 md:p-8 space-y-6 flex-1 overflow-y-auto bg-coffee-dark">
         <div className="flex items-center justify-between border-b border-white/5 pb-4">
@@ -1671,7 +1766,7 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
               <span>Gerenciamento de Escalas</span>
             </div>
             <h1 className="text-2xl font-black text-white tracking-tighter uppercase">
-              {activeTab === 'semanal' ? 'Escalas Semanais' : 'Escalas Ativas'}
+              {activeTab === 'semanal' ? 'Histórico de Escalas' : 'Escalas Ativas'}
             </h1>
           </div>
           <div className="flex items-center gap-2">
@@ -1718,58 +1813,37 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
 
         {renderTabs()}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+        <div className="w-full flex flex-col gap-6">
           {loading ? (
-            <div className="col-span-full text-center py-16 text-slate-500 text-xs">Carregando escalas...</div>
+            <div className="text-center py-16 text-slate-500 text-xs">Carregando escalas...</div>
           ) : scaleGroups.length === 0 ? (
-            <div className="col-span-full flex flex-col items-center justify-center py-16 gap-3 border border-dashed border-white/10 rounded-[2rem]">
+            <div className="flex flex-col items-center justify-center py-16 gap-3 border border-dashed border-white/10 rounded-[2rem]">
               <Calendar size={40} className="text-white/10" />
               <p className="text-slate-500 font-bold uppercase tracking-widest text-[10px]">Nenhuma escala encontrada.</p>
               {activeTab === 'ativas' && <button onClick={() => setView('create')} className="text-coffee-red hover:underline text-[10px] font-bold uppercase tracking-widest">Criar a primeira escala</button>}
             </div>
-          ) : (
-            scaleGroups.map(group => (
-              <motion.div 
-                key={group.id}
-                whileHover={{ y: -3 }}
-                className={`bg-white/5 border border-white/10 p-6 rounded-[2rem] cursor-pointer group transition-all ${activeTab === 'semanal' ? 'hover:border-amber-500/50' : 'hover:border-coffee-red/50'}`}
-                onClick={() => {
-                  setActiveGroupId(group.id);
-                  setActiveGroupDate(group.data_escala);
-                  setView('details');
-                }}
-              >
-                <div className="flex justify-between items-start mb-4">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${activeTab === 'semanal' ? 'bg-amber-500/10 text-amber-500 group-hover:bg-amber-500 group-hover:text-white' : 'bg-coffee-red/10 text-coffee-red group-hover:bg-coffee-red group-hover:text-white'}`}>
-                    <Calendar size={20} />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className={`px-2.5 py-0.5 rounded-full border text-[9px] font-black uppercase tracking-widest ${group.status === 'Archived' ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'}`}>
-                      {group.status === 'Archived' ? 'Arquivado' : 'Em Aberto'}
-                    </div>
-                    {group.status !== 'Archived' && canEdit && (
-                      <button
-                        onClick={(e) => handleArchiveScale(e, group.id)}
-                        className="w-6 h-6 rounded-full bg-white/5 hover:bg-amber-500/20 text-slate-400 hover:text-amber-500 flex items-center justify-center transition-colors"
-                        title="Arquivar Escala"
-                      >
-                        <Archive size={12} />
-                      </button>
-                    )}
-                  </div>
+          ) : activeTab === 'semanal' ? (
+            Object.entries(
+              scaleGroups.reduce((acc, group) => {
+                const date = new Date(group.data_escala + 'T00:00:00');
+                const monthYear = date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+                const capMonthYear = monthYear.charAt(0).toUpperCase() + monthYear.slice(1);
+                if (!acc[capMonthYear]) acc[capMonthYear] = [];
+                acc[capMonthYear].push(group);
+                return acc;
+              }, {} as Record<string, ScaleGroup[]>)
+            ).map(([monthYear, groups]) => (
+              <div key={monthYear} className="space-y-4">
+                <h2 className="text-xl font-black text-slate-400 capitalize">{monthYear}</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                  {groups.map(group => renderGroupCard(group))}
                 </div>
-                <h3 className="text-xl font-black text-white tracking-tight mb-1">
-                  {new Date(group.data_escala + 'T00:00:00').toLocaleDateString('pt-BR')}
-                </h3>
-                <p className="text-slate-500 text-[9px] font-bold uppercase tracking-widest mb-4">
-                  Escala #{group.id.toString().padStart(4, '0')}
-                </p>
-                <div className="flex items-center gap-2 text-slate-400 text-[10px] font-medium">
-                  <Truck size={14} />
-                  <span>{group.items_count} Veículos registrados</span>
-                </div>
-              </motion.div>
+              </div>
             ))
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+              {scaleGroups.map(group => renderGroupCard(group))}
+            </div>
           )}
         </div>
       </div>
@@ -2205,7 +2279,7 @@ interface EscalaCardProps {
   index: number;
   isExpanded: boolean;
   onToggle: () => void;
-  onUpdate: () => Promise<void>;
+  onUpdate: () => void | Promise<void>;
   onEdit: () => void;
   onOptimisticRemove: (id: number) => void;
   canEdit: boolean;
@@ -2235,11 +2309,64 @@ const EscalaCard = ({ item, index, isExpanded, onToggle, onUpdate, onEdit, onOpt
     onUpdate();
   };
 
-  const handleToggleChecklistRealizado = async (val: 'Sim' | 'Não') => {
+  const handleChecklistRealizadoSim = async () => {
+    // Esconder a pergunta
     const allItems = getStorage<EscalaItem[]>(STORAGE_KEYS.ESCALA, []);
-    const updatedItems = allItems.map(i => i.id === item.id ? { ...i, checklist_realizado: val } : i);
+    const updatedItems = allItems.map(i => i.id === item.id ? { ...i, checklist_realizado: 'Sim' } : i);
     setStorage(STORAGE_KEYS.ESCALA, updatedItems);
-    onUpdate();
+    
+    // Calcular validade para daqui a 6 meses
+    const novaData = new Date();
+    novaData.setMonth(novaData.getMonth() + 6);
+    const validadeStr = novaData.toISOString().split('T')[0];
+
+    try {
+      // Atualizar Firestore - Checklist Collection
+      const checklists = await storageService.getChecklists();
+      const existingChecklist = checklists.find(c => c.placa === item.cavalo);
+      await storageService.saveChecklist({
+        placa: item.cavalo,
+        status: 'Checklist OK',
+        validade: validadeStr,
+        tipo: existingChecklist?.tipo || 'Cavalo',
+        created_at: existingChecklist?.created_at || new Date().toISOString()
+      });
+
+      // Atualizar Firestore - EscalaItem
+      await storageService.saveEscalaItem({
+        ...item,
+        checklist_status: 'Checklist OK'
+      });
+      
+      onUpdate();
+    } catch (error) {
+      console.error("Erro ao validar checklist:", error);
+    }
+  };
+
+  const handleChecklistRealizadoNao = async (restricao: string) => {
+    try {
+      // Atualizar Firestore - Checklist Collection
+      const checklists = await storageService.getChecklists();
+      const existingChecklist = checklists.find(c => c.placa === item.cavalo);
+      await storageService.saveChecklist({
+        placa: item.cavalo,
+        status: restricao,
+        validade: existingChecklist?.validade || null,
+        tipo: existingChecklist?.tipo || 'Cavalo',
+        created_at: existingChecklist?.created_at || new Date().toISOString()
+      });
+
+      // Atualizar Firestore - EscalaItem
+      await storageService.saveEscalaItem({
+        ...item,
+        checklist_status: restricao as any
+      });
+      
+      onUpdate();
+    } catch (error) {
+      console.error("Erro ao aplicar restrição:", error);
+    }
   };
 
   const handleDeleteItem = async (e: React.MouseEvent) => {
@@ -2334,167 +2461,53 @@ const EscalaCard = ({ item, index, isExpanded, onToggle, onUpdate, onEdit, onOpt
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Veículo Atrelado option hidden as requested */}
 
-              {activeTab === 'checklist_vencido' && (
+              {activeTab === 'checklist_vencido' && item.checklist_realizado !== 'Sim' && (
                 <div className="space-y-3">
                   <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Checklist Realizado?</h4>
                   <div className="flex gap-2">
-                    {['Sim', 'Não'].map(opt => (
-                      <button
-                        key={opt}
-                        onClick={() => handleToggleChecklistRealizado(opt as any)}
-                        className={`flex-1 h-9 rounded-xl font-black text-[9px] uppercase tracking-widest transition-all border ${
-                          item.checklist_realizado === opt 
-                            ? 'bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-500/20' 
-                            : 'bg-white/5 text-slate-500 border-white/10 hover:border-white/20'
+                    <button
+                      onClick={handleChecklistRealizadoSim}
+                      className="flex-1 h-9 rounded-xl font-black text-[9px] uppercase tracking-widest transition-all border bg-emerald-500/10 text-emerald-500 border-emerald-500/30 hover:bg-emerald-500 hover:text-white"
+                    >
+                      Sim
+                    </button>
+                    <button
+                      onClick={() => setChecklistResult('Negativado')}
+                      className={`flex-1 h-9 rounded-xl font-black text-[9px] uppercase tracking-widest transition-all border ${
+                        checklistResult === 'Negativado'
+                          ? 'bg-rose-500 text-white border-rose-500 shadow-lg shadow-rose-500/20' 
+                          : 'bg-white/5 text-slate-500 border-white/10 hover:border-white/20'
                         }`}
-                      >
-                        {opt}
-                      </button>
-                    ))}
+                    >
+                      Não
+                    </button>
                   </div>
                   
-                  {item.checklist_realizado === 'Sim' && (
+                  {checklistResult === 'Negativado' && (
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: 'auto' }}
-                      className="pt-2 space-y-3"
+                      className="pt-2"
                     >
-                      {/* Select Resultado */}
-                      <div>
-                        <label className="block text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">
-                          Resultado do Checklist
-                        </label>
-                        <select
-                          value={checklistResult || ''}
-                          onChange={(e) => {
-                              setChecklistResult(e.target.value as any);
-                              setNegativadoAction(null); // Resetar ação ao mudar resultado
-                              setNewValidade(''); // Resetar data ao mudar resultado
-                          }}
-                          className="w-full bg-emerald-500/20 border border-emerald-500/30 rounded-xl px-3 py-2 text-emerald-100 text-xs focus:outline-none focus:border-emerald-500 transition-colors font-medium"
-                        >
-                          <option value="" className="bg-slate-800 text-white">Selecione...</option>
-                          <option value="Checklist OK" className="bg-slate-800 text-white">Checklist OK</option>
-                          <option value="Negativado" className="bg-slate-800 text-white">Negativado</option>
-                        </select>
-                      </div>
-
-                      {/* Se Negativado */}
-                      {checklistResult === 'Negativado' && (
-                        <motion.div
-                          initial={{ opacity: 0, y: -10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                        >
-                          <label className="block text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">
-                            Ação
-                          </label>
-                          <select
-                            value={negativadoAction || ''}
-                            onChange={(e) => setNegativadoAction(e.target.value as any)}
-                            className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-rose-500 transition-colors mb-2"
-                          >
-                            <option value="" className="bg-slate-800 text-white">Selecione...</option>
-                            <option value="Liberado para 1 viagem" className="bg-slate-800 text-white">Liberado para 1 viagem</option>
-                            <option value="Reprovado" className="bg-slate-800 text-white">Reprovado</option>
-                          </select>
-                          
-                          <button
-                              disabled={!negativadoAction}
-                              onClick={() => {
-                                  // Lógica de salvar Negativado
-                                  const allChecklists = getStorage<any[]>(STORAGE_KEYS.CHECKLISTS, []);
-                                  const existingIndex = allChecklists.findIndex(c => c.placa === item.cavalo);
-                                  let newChecklists = [...allChecklists];
-                                  
-                                  const newStatus = `Negativado - ${negativadoAction}`;
-                                  
-                                  const checklistItem = {
-                                      placa: item.cavalo,
-                                      status: newStatus,
-                                      validade: null,
-                                      tipo: 'Cavalo',
-                                      created_at: new Date().toISOString()
-                                  };
-
-                                  if (existingIndex >= 0) {
-                                      newChecklists[existingIndex] = { ...newChecklists[existingIndex], ...checklistItem };
-                                  } else {
-                                      newChecklists.push(checklistItem);
-                                  }
-                                  
-                                  setStorage(STORAGE_KEYS.CHECKLISTS, newChecklists);
-                                  
-                                  // Atualizar Escala
-                                  const allEscala = getStorage<EscalaItem[]>(STORAGE_KEYS.ESCALA, []);
-                                  const updatedEscala = allEscala.map(i => i.id === item.id ? { ...i, checklist_status: newStatus } : i);
-                                  setStorage(STORAGE_KEYS.ESCALA, updatedEscala);
-                                  
-                                  addNotification('danger', `Checklist Negativado: ${item.cavalo} - ${newStatus}`);
-                                  alert(`Status atualizado para: ${newStatus}`);
-                                  onUpdate();
-                              }}
-                              className="w-full h-9 bg-rose-500 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                              Confirmar Negativação
-                          </button>
-                        </motion.div>
-                      )}
-
-                      {/* Se Checklist OK */}
-                      {checklistResult === 'Checklist OK' && (
-                        <motion.div
-                          initial={{ opacity: 0, y: -10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                        >
-                          <label className="block text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">
-                            Nova Validade
-                          </label>
-                          <input 
-                            type="date" 
-                            value={newValidade}
-                            onChange={(e) => setNewValidade(e.target.value)}
-                            className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-emerald-500 transition-colors mb-2"
-                          />
-                          
-                          <button
-                              disabled={!newValidade}
-                              onClick={() => {
-                                  // Lógica de salvar Checklist OK
-                                  const allChecklists = getStorage<any[]>(STORAGE_KEYS.CHECKLISTS, []);
-                                  const existingIndex = allChecklists.findIndex(c => c.placa === item.cavalo);
-                                  let newChecklists = [...allChecklists];
-                                  
-                                  const checklistItem = {
-                                      placa: item.cavalo,
-                                      status: 'Checklist OK',
-                                      validade: newValidade,
-                                      tipo: 'Cavalo',
-                                      created_at: new Date().toISOString()
-                                  };
-
-                                  if (existingIndex >= 0) {
-                                      newChecklists[existingIndex] = { ...newChecklists[existingIndex], ...checklistItem };
-                                  } else {
-                                      newChecklists.push(checklistItem);
-                                  }
-                                  
-                                  setStorage(STORAGE_KEYS.CHECKLISTS, newChecklists);
-                                  
-                                  // Atualizar Escala
-                                  const allEscala = getStorage<EscalaItem[]>(STORAGE_KEYS.ESCALA, []);
-                                  const updatedEscala = allEscala.map(i => i.id === item.id ? { ...i, checklist_status: 'Checklist OK', veiculo_atrelado: 'Não' } : i);
-                                  setStorage(STORAGE_KEYS.ESCALA, updatedEscala);
-                                  
-                                  addNotification('success', `Checklist OK: ${item.cavalo} - Validade ${new Date(newValidade).toLocaleDateString('pt-BR')}`);
-                                  alert(`Checklist atualizado para OK com validade ${new Date(newValidade).toLocaleDateString('pt-BR')}!`);
-                                  onUpdate();
-                              }}
-                              className="w-full h-9 bg-emerald-500 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                              OK
-                          </button>
-                        </motion.div>
-                      )}
+                      <label className="block text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">
+                        Restrição Manual
+                      </label>
+                      <select
+                        onChange={(e) => {
+                           if (e.target.value) {
+                             handleChecklistRealizadoNao(e.target.value);
+                             setChecklistResult(null); // Fecha o dropdown após selecionar
+                           }
+                        }}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-rose-500 transition-colors"
+                      >
+                        <option value="" className="bg-slate-800 text-white">Selecione...</option>
+                        <option value="Nenhuma" className="bg-slate-800 text-white">Nenhuma</option>
+                        <option value="Manutenção" className="bg-slate-800 text-white">Manutenção</option>
+                        <option value="Documentação" className="bg-slate-800 text-white">Documentação</option>
+                        <option value="Negativado" className="bg-slate-800 text-white">Negativado</option>
+                        <option value="Precisa de Manutenção" className="bg-slate-800 text-white">Precisa de Manutenção</option>
+                      </select>
                     </motion.div>
                   )}
                 </div>
@@ -2527,18 +2540,23 @@ function ChecklistPage({ setPage, currentUser }: { setPage: (page: any) => void;
   const [addValidade, setAddValidade] = useState('');
   const [addTipo, setAddTipo] = useState('Cavalo');
 
-  useEffect(() => { fetchChecklists(); }, []);
-
-  const fetchChecklists = async () => {
+  useEffect(() => { 
     setLoading(true);
-    try {
-      const data = await storageService.getChecklists();
+    const q = collection(db, 'checklists');
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any;
       setChecklists(data);
-    } catch (error) {
-      console.error('Failed to fetch checklists:', error);
-    } finally {
       setLoading(false);
-    }
+    }, (error) => {
+      console.error('Failed to fetch checklists:', error);
+      setLoading(false);
+    });
+    
+    return () => unsubscribe();
+  }, []);
+
+  const fetchChecklists = () => {
+     // Stub to satisfy other functions calling it, now handled by onSnapshot
   };
 
   const handleAddVehicle = async (e: FormEvent) => {

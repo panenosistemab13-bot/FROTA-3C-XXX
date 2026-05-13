@@ -10,9 +10,9 @@ const COLLECTIONS = {
 };
 
 export const storageService = {
-  async getScaleGroups() {
+  async getScaleGroups(): Promise<any[]> {
     const querySnapshot = await getDocs(collection(db, COLLECTIONS.GROUPS));
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
   },
 
   async saveScaleGroup(group: any) {
@@ -25,9 +25,9 @@ export const storageService = {
     await deleteDoc(doc(db, COLLECTIONS.GROUPS, id.toString()));
   },
 
-  async getEscalaItems() {
+  async getEscalaItems(): Promise<any[]> {
     const querySnapshot = await getDocs(collection(db, COLLECTIONS.ESCALA));
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
   },
 
   async saveEscalaItem(item: any) {
@@ -46,9 +46,9 @@ export const storageService = {
     await deleteDoc(doc(db, COLLECTIONS.ESCALA, id.toString()));
   },
 
-  async getChecklists() {
+  async getChecklists(): Promise<any[]> {
     const querySnapshot = await getDocs(collection(db, COLLECTIONS.CHECKLISTS));
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
   },
 
   async saveChecklist(checklist: any) {
@@ -74,7 +74,7 @@ export const storageService = {
     return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   },
 
-  async addNotification(message: string, type: 'success' | 'alert' | 'info') {
+  async addNotification(message: string, type: 'info' | 'success' | 'warning' | 'danger' | 'neutral') {
     await addDoc(collection(db, COLLECTIONS.NOTIFICATIONS), {
       message,
       type,
