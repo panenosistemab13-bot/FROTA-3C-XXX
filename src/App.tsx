@@ -44,25 +44,12 @@ const playNotificationSound = async (message: string, soundEnabled: boolean) => 
     }
   }
 
-  let soundUrl = '';
-  const msgUpper = message.toUpperCase();
-  
-  // Specific patterns based on standardized prefixes
-  if (msgUpper.includes('[CHECKLIST]') && msgUpper.includes('REALIZADO')) {
-    soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
-  } else if (msgUpper.includes('[CHAT]')) {
-    soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2357/2357-preview.mp3';
-  } else if (msgUpper.includes('[ESCALA]') || msgUpper.includes('[DOCAS]')) {
-    soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3';
-  } else if (msgUpper.includes('[ADMIN]')) {
-    soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3';
-  } else {
-    soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2218/2218-preview.mp3';
-  }
+  // URL pública e segura para teste na Vercel conforme solicitado
+  const soundUrl = 'https://actions.google.com/sounds/v1/alarms/beep_short.ogg';
   
   if (soundUrl) {
     const audio = new Audio(soundUrl);
-    audio.volume = 0.5;
+    audio.volume = 1.0; // Volume máximo conforme solicitado
     try {
       await audio.play();
       console.log(`[AUDIO] Playback successful: ${message}`);
