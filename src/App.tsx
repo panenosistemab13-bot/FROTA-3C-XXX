@@ -23,38 +23,54 @@ interface AppNotification {
   isPriority?: boolean;
 }
 
-const playNotificationSound = (message: string, soundEnabled: boolean) => {
+let audioContext: AudioContext | null = null;
+const getAudioContext = () => {
+    if (!audioContext) {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) audioContext = new AudioCtx();
+    }
+    return audioContext;
+};
+
+const playNotificationSound = async (message: string, soundEnabled: boolean) => {
   if (!soundEnabled) return;
   
+  const ctx = getAudioContext();
+  if (ctx && ctx.state === 'suspended') {
+    try {
+        await ctx.resume();
+    } catch (e) {
+        console.warn('[AUDIO] Failed to resume AudioContext:', e);
+    }
+  }
+
   let soundUrl = '';
   const msgUpper = message.toUpperCase();
   
   // Specific patterns based on standardized prefixes
   if (msgUpper.includes('[CHECKLIST]') && msgUpper.includes('REALIZADO')) {
-    // Longer and more noticeable sound for checklist completion
     soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
   } else if (msgUpper.includes('[CHAT]')) {
-    // Chat message sound
     soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2357/2357-preview.mp3';
   } else if (msgUpper.includes('[ESCALA]') || msgUpper.includes('[DOCAS]')) {
-    // Discrete operational sound
     soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3';
   } else if (msgUpper.includes('[ADMIN]')) {
-    // Alert sound for admin operations
     soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3';
   } else {
-    // Default notification sound
     soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2218/2218-preview.mp3';
   }
   
   if (soundUrl) {
     const audio = new Audio(soundUrl);
     audio.volume = 0.5;
-    audio.play()
-      .then(() => console.log(`[AUDIO] Playback triggered successfully: ${message}`))
-      .catch(e => {
-        console.error('[AUDIO] Playback failed or blocked. User interaction may be required.', e);
-      });
+    try {
+      await audio.play();
+      console.log(`[AUDIO] Playback successful: ${message}`);
+    } catch (e) {
+      console.error('[AUDIO] Playback blocked by browser. User interaction required.', e);
+      // Dispatch a custom event to show a visual warning in the UI
+      window.dispatchEvent(new CustomEvent('audio_blocked', { detail: { message } }));
+    }
   }
 };
 
@@ -205,32 +221,35 @@ export default function App() {
     return () => clearInterval(notificationCleanupInterval);
   }, []);
 
+  const [audioBlocked, setAudioBlocked] = useState(false);
+
+  useEffect(() => {
+    const handleAudioBlocked = () => setAudioBlocked(true);
+    window.addEventListener('audio_blocked', handleAudioBlocked);
+    return () => window.removeEventListener('audio_blocked', handleAudioBlocked);
+  }, []);
+
   // Audio Unlocking Logic (Bypasses browser autoplay restrictions)
   useEffect(() => {
     const unlockAudio = () => {
-      const audio = new Audio();
-      // One pixel transparent silent wav
-      audio.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
-      const playPromise = audio.play();
-      
-      if (playPromise !== undefined) {
-        playPromise.then(() => {
-          console.log('[AUDIO] System unlocked successfully by user interaction');
-          
-          // Resume AudioContext if it exists to be double sure
-          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-          if (AudioCtx) {
-            const tempCtx = new AudioCtx();
-            if (tempCtx.state === 'suspended') tempCtx.resume();
-          }
+      setAudioBlocked(false);
+      const ctx = getAudioContext();
+      if (ctx && ctx.state === 'suspended') {
+        ctx.resume().then(() => {
+            console.log('[AUDIO] Context resumed successfully');
+        });
+      }
 
+      const audio = new Audio();
+      audio.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+      audio.play().then(() => {
+          console.log('[AUDIO] Dummy sound played to unlock browser audio');
           window.removeEventListener('mousedown', unlockAudio);
           window.removeEventListener('touchstart', unlockAudio);
           window.removeEventListener('keydown', unlockAudio);
-        }).catch(e => {
-          console.error('[AUDIO] Unlock failed:', e);
-        });
-      }
+      }).catch(e => {
+          console.warn('[AUDIO] Dummy play failed, still locked:', e);
+      });
     };
 
     window.addEventListener('mousedown', unlockAudio);
@@ -284,6 +303,23 @@ export default function App() {
         onLogout={() => setCurrentUser(null)}
       />
       <main className="flex-1 flex flex-col relative">
+        <AnimatePresence>
+          {audioBlocked && (
+            <motion.div
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="absolute top-4 left-1/2 -translate-x-1/2 z-[100] bg-amber-500/90 backdrop-blur-md text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 border border-white/20"
+            >
+              <VolumeX size={18} className="animate-pulse" />
+              <div className="flex flex-col">
+                <span className="text-[10px] font-black uppercase tracking-widest leading-none">Áudio Bloqueado</span>
+                <span className="text-[8px] font-bold opacity-80 uppercase tracking-tighter">Clique em qualquer lugar para ativar o som</span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        
         <AnimatePresence mode="wait">
           <motion.div
             key={page}
