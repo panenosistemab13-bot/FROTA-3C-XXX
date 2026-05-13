@@ -20,6 +20,9 @@
 }
 
 @layer base {
+  * {
+    unicode-bidi: isolate;
+  }
   body {
     @apply bg-slate-950 text-white antialiased font-sans;
   }

@@ -3,7 +3,7 @@ import { Truck, Plus, X, Calendar, Users, ChevronDown, ChevronUp, ChevronRight, 
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { storageService } from './services/storageService';
-import { collection, onSnapshot, query, addDoc, serverTimestamp, orderBy, limit, where } from 'firebase/firestore';
+import { collection, onSnapshot, query, addDoc, serverTimestamp, orderBy, limit, where, deleteDoc, doc } from 'firebase/firestore';
 import { db } from './lib/firebase';
 
 // --- DATA & TYPES ---
@@ -433,7 +433,7 @@ function VeiculosPage({ setPage, currentUser }: { setPage: (page: any) => void; 
             <Truck size={10} />
             <span>Controle de Pátio</span>
           </div>
-          <h1 className="text-2xl font-black text-white tracking-tighter uppercase">Veículos</h1>
+          <h1 translate="no" className="text-2xl font-black text-white tracking-tighter uppercase">Veículos</h1>
         </div>
         <div className="flex items-center gap-3">
           <div className="relative">
@@ -640,7 +640,7 @@ function DashboardPage({ onNavigate, onLogout }: { onNavigate: (page: any) => vo
             <Plus size={16} className="text-coffee-red fill-coffee-red" />
           </div>
         </div>
-        <h1 className="text-2xl font-black text-white tracking-tighter uppercase mb-1">
+        <h1 translate="no" className="text-2xl font-black text-white tracking-tighter uppercase mb-1">
           Bem-vindo à <span className="text-coffee-red">FROTA 3C</span>
         </h1>
         <p className="text-coffee-red font-medium tracking-widest uppercase text-[8px]">Conectando corações através do café</p>
@@ -957,8 +957,7 @@ const ExpedicaoShiftChart = ({ data }: { data: FrotaItem[] }) => {
 };
 
 function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; currentUser: string }) {
-  const [isLocked] = useState(false);
-  const [messages, setMessages] = useState<{ id: string; user: string; text: string; time: string; isMe: boolean }[]>([]);
+  const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -1039,64 +1038,6 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
     }
   };
 
-
-  if (isLocked) {
-    return (
-      <div className="p-4 md:p-8 flex-1 flex flex-col items-center justify-center bg-coffee-dark">
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="w-full max-w-sm bg-white/5 border border-white/10 rounded-3xl p-8 backdrop-blur-xl"
-        >
-          <div className="flex flex-col items-center mb-6 text-center">
-            <div className="w-16 h-16 bg-coffee-red/20 text-coffee-red rounded-2xl flex items-center justify-center mb-4 border border-coffee-red/30">
-              <Shield size={32} />
-            </div>
-            <h2 className="text-xl font-black text-white tracking-tighter uppercase">Área Protegida</h2>
-            <p className="text-slate-500 text-[10px] uppercase font-bold tracking-widest mt-2 px-4 leading-relaxed">
-              Digite a senha de segurança para acessar o chat da equipe.
-            </p>
-          </div>
-
-          <form onSubmit={handleUnlock} className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-[8px] font-black text-slate-500 uppercase tracking-widest ml-1">Senha de Acesso</label>
-              <input
-                type="password"
-                value={accessPassword}
-                onChange={(e) => setAccessPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full h-12 bg-slate-900 border border-white/10 rounded-xl px-4 text-white focus:ring-2 focus:ring-coffee-red outline-none transition-all"
-                autoFocus
-              />
-            </div>
-
-            {passwordError && (
-              <p className="text-coffee-red text-[10px] font-black uppercase tracking-widest text-center animate-pulse">
-                Senha incorreta! Tente novamente.
-              </p>
-            )}
-
-            <button
-              type="submit"
-              className="w-full h-12 bg-coffee-red text-white rounded-xl font-black uppercase tracking-widest shadow-xl shadow-coffee-red/20 hover:bg-coffee-red/80 transition-all"
-            >
-              Desbloquear Chat
-            </button>
-            
-            <button
-              onClick={() => setPage('dashboard')}
-              type="button"
-              className="w-full h-10 bg-white/5 text-slate-400 rounded-xl font-black uppercase tracking-widest text-[9px] hover:text-white transition-all"
-            >
-              Voltar ao Início
-            </button>
-          </form>
-        </motion.div>
-      </div>
-    );
-  }
-
   return (
     <div className="p-4 md:p-8 space-y-6 flex-1 flex flex-col h-full bg-coffee-dark">
       <div className="flex items-center justify-between border-b border-white/5 pb-4 flex-shrink-0">
@@ -1105,7 +1046,7 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
             <MessageSquare size={10} />
             <span>Comunicação Interna</span>
           </div>
-          <h1 className="text-2xl font-black text-white tracking-tighter">CHAT DA EQUIPE</h1>
+          <h1 translate="no" className="text-2xl font-black text-white tracking-tighter">CHAT DA EQUIPE</h1>
         </div>
         <button 
           onClick={() => setPage('dashboard')}
@@ -1211,7 +1152,7 @@ function Sidebar({ currentPage, setPage, collapsed, onToggle, currentUser, onLog
             onClick={() => setPage(item.id as any)}
             className={`flex items-center gap-3 px-4 py-3 w-full rounded-xl font-black uppercase tracking-tighter text-[10px] transition-all group relative ${collapsed ? 'justify-center' : ''} ${currentPage === item.id ? 'bg-coffee-red text-white shadow-2xl shadow-coffee-red/30' : 'text-slate-500 hover:bg-white/5 hover:text-white'}`}>
             <item.icon size={16} className={`flex-shrink-0 ${currentPage === item.id ? 'text-white' : 'group-hover:text-coffee-red transition-colors'}`} />
-            {!collapsed && <span>{item.label}</span>}
+            {!collapsed && <span translate="no">{item.label}</span>}
           </button>
         ))}
 
@@ -1985,7 +1926,7 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
             <ChevronsLeft size={10} />
             <span>Voltar para Lista</span>
           </button>
-          <h1 className="text-2xl font-black text-white tracking-tighter flex items-center gap-2">
+          <h1 translate="no" className="text-2xl font-black text-white tracking-tighter flex items-center gap-2">
             ESCALA <span className="text-coffee-red">{new Date(activeGroupDate + 'T00:00:00').toLocaleDateString('pt-BR')}</span>
           </h1>
         </div>
@@ -2570,7 +2511,7 @@ const EscalaCard = ({ item, index, isExpanded, onToggle, onUpdate, onEdit, onOpt
 
 function ChecklistPage({ setPage, currentUser }: { setPage: (page: any) => void; currentUser: string }) {
   const canEdit = ['gr3c', 'jeff'].includes(currentUser);
-  const [checklists, setChecklists] = useState<{ placa: string; status: string; validade: string | null; tipo: string; created_at: string }[]>([]);
+  const [checklists, setChecklists] = useState<{ id: string; placa: string; status: string; validade: string | null; tipo: string; created_at: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
   const [expandedPlaca, setExpandedPlaca] = useState<string | null>(null);
@@ -2658,18 +2599,14 @@ function ChecklistPage({ setPage, currentUser }: { setPage: (page: any) => void;
     }
   };
 
-  const handleDeleteChecklist = async (index: number) => {
-    if (!window.confirm('Deseja realmente apagar este checklist?')) return;
+  const handleDeleteVehicle = async (id: string) => {
+    if (!window.confirm('Tem certeza que deseja remover este veículo? Esta ação não pode ser desfeita.')) return;
     
     try {
       setLoading(true);
-      const currentList = await storageService.getChecklists();
-      const target = currentList[index];
-      if (target) {
-        // ATUALIZAÇÃO OTIMISTA: Remove da tela na hora!
-        setChecklists(prev => prev.filter((_, i) => i !== index));
-        await storageService.deleteChecklist(target.placa);
-      }
+      // ATUALIZAÇÃO OTIMISTA: Remove da tela na hora!
+      setChecklists(prev => prev.filter(c => c.id !== id));
+      await deleteDoc(doc(db, 'checklists', id));
     } catch (error) {
       console.error('Failed to delete checklist:', error);
       fetchChecklists(); // Revert optimistic update
@@ -2703,7 +2640,7 @@ function ChecklistPage({ setPage, currentUser }: { setPage: (page: any) => void;
             <CheckCircle size={10} />
             <span>Controle de Vistorias</span>
           </div>
-          <h1 className="text-2xl font-black text-white tracking-tighter uppercase">Checklists</h1>
+          <h1 translate="no" className="text-2xl font-black text-white tracking-tighter uppercase">Checklists</h1>
         </div>
         <div className="flex items-center gap-2">
           <button 
@@ -2771,6 +2708,9 @@ function ChecklistPage({ setPage, currentUser }: { setPage: (page: any) => void;
                         setNewTipo(c.tipo);
                       }} className="p-1.5 bg-white/5 rounded-lg text-slate-500 hover:text-white transition-colors" title="Editar">
                         <Pencil size={12} />
+                      </button>
+                      <button onClick={() => handleDeleteVehicle(c.id)} className="p-1.5 bg-white/5 rounded-lg text-red-500 hover:bg-red-500/20 transition-colors" title="Excluir">
+                        <Trash2 size={12} />
                       </button>
                     </>
                   )}
@@ -2992,7 +2932,7 @@ function RecebimentoPage({ setPage, currentUser }: { setPage: (page: any) => voi
             <FileText size={10} />
             <span>Processamento de NF</span>
           </div>
-          <h1 className="text-2xl font-black text-white tracking-tighter uppercase">Recebimento</h1>
+          <h1 translate="no" className="text-2xl font-black text-white tracking-tighter uppercase">Recebimento</h1>
         </div>
         <div className="flex items-center gap-3">
           <div className="relative">
@@ -3331,7 +3271,7 @@ function DocasPage({ setPage, currentUser }: { setPage: (page: any) => void; cur
               <Shield size={10} />
               <span>Monitoramento Ativo</span>
             </div>
-            <h1 className="text-xl md:text-2xl font-black text-white tracking-tighter uppercase">Docas</h1>
+            <h1 translate="no" className="text-xl md:text-2xl font-black text-white tracking-tighter uppercase">Docas</h1>
           </div>
           <button 
             onClick={() => setPage('dashboard')}
