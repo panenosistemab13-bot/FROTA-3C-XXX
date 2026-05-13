@@ -85,14 +85,18 @@ export const storageService = {
   async updateChatMessage(id: string, newContent: string) {
     const docRef = doc(db, 'chat_messages', id);
     await updateDoc(docRef, {
-      message: newContent,
+      texto: newContent,
+      isEdited: true,
       editedAt: serverTimestamp()
     });
   },
 
-  async deleteChatMessage(id: string) {
+  async softDeleteChatMessage(id: string) {
     const docRef = doc(db, 'chat_messages', id);
-    await deleteDoc(docRef);
+    await updateDoc(docRef, {
+      texto: "Esta mensagem foi apagada",
+      isDeleted: true
+    });
   },
 
   async clearNotifications() {

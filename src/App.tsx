@@ -985,8 +985,11 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
         
         setMessages(fetchedMessages.map((msg: any) => {
             const msgDate = msg.timestamp?.toDate();
-            // Force true for testing display as requested
-            const canEditDelete = true; 
+            // Re-apply strict security constraint: Author AND < 5 mins AND not already deleted
+            const canEditDelete = msg.id_usuario === currentUser && 
+                                 msgDate && 
+                                 (now - msgDate.getTime()) < 5 * 60 * 1000 &&
+                                 !msg.isDeleted;
 
             return {
                 id: msg.id,
@@ -994,7 +997,9 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
                 text: msg.texto,
                 time: msgDate?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '',
                 isMe: msg.id_usuario === currentUser,
-                canEditDelete
+                canEditDelete,
+                isEdited: msg.isEdited,
+                isDeleted: msg.isDeleted
             };
         }));
     });
@@ -1010,7 +1015,9 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
             texto: newMessage,
             usuario: currentUser,
             id_usuario: currentUser,
-            timestamp: serverTimestamp()
+            timestamp: serverTimestamp(),
+            isEdited: false,
+            isDeleted: false
         });
         await storageService.addNotification(`Nova mensagem de ${currentUser} no chat`, 'info');
         setNewMessage('');
@@ -1028,7 +1035,7 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
 
   const handleDelete = async (id: string) => {
     if (confirm("Tem certeza que deseja excluir esta mensagem?")) {
-      await storageService.deleteChatMessage(id);
+      await storageService.softDeleteChatMessage(id);
     }
   };
 
@@ -1116,8 +1123,9 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black uppercase flex-shrink-0 ${msg.isMe ? 'bg-coffee-red text-white' : 'bg-slate-700 text-slate-300'}`}>
                   {msg.user.substring(0, 2)}
                 </div>
-                <div className={`p-3 rounded-2xl text-xs leading-relaxed flex items-center gap-2 relative ${msg.isMe ? 'bg-coffee-red text-white rounded-tr-none' : 'bg-slate-800 text-slate-300 rounded-tl-none'}`}>
+                <div className={`p-3 rounded-2xl text-xs leading-relaxed flex items-center gap-2 relative ${msg.isMe ? 'bg-coffee-red text-white rounded-tr-none' : 'bg-slate-800 text-slate-300 rounded-tl-none'} ${msg.isDeleted ? 'italic text-slate-500 bg-slate-900 border border-slate-800' : ''}`}>
                   {msg.text}
+                  {msg.isEdited && <span className="text-[9px] opacity-70">(editada)</span>}
                   {msg.canEditDelete && (
                     <div className="absolute -top-3 -right-3 flex gap-1 items-center bg-black/60 rounded-full p-1.5 z-50 border border-white/10 shadow-lg">
                       <button onClick={() => handleEdit(msg.id, msg.text)} className="text-yellow-400 hover:text-yellow-200 transition-colors"><Pencil size={12} /></button>
