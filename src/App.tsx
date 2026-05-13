@@ -1135,6 +1135,7 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
   const handleClearChat = async () => {
     if (confirm("ATENÇÃO: Você deseja apagar TODO o histórico de mensagens para todos?")) {
       try {
+        setMessages([]); // Force immediate UI update
         await storageService.clearChatHistory();
         alert("Chat limpo com sucesso!");
       } catch (error) {
