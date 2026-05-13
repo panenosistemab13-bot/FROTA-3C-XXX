@@ -1,5 +1,5 @@
 import { useState, useEffect, FormEvent, ChangeEvent, useMemo, Fragment, useRef } from 'react';
-import { Truck, Plus, X, Calendar, Users, ChevronDown, ChevronUp, ChevronRight, CheckCircle, XCircle, AlertTriangle, Wrench, Home, MoveRight, Send, ChevronsLeft, ChevronsRight, Pencil, BookOpen, History, Ship, Archive, LayoutDashboard, PieChart as PieChartIcon, Search, Shield, Trash2, LogOut, MessageSquare, Lightbulb, Activity, FileText } from 'lucide-react';
+import { Truck, Plus, X, Calendar, Users, ChevronDown, ChevronUp, ChevronRight, CheckCircle, XCircle, AlertTriangle, Wrench, Home, MoveRight, Send, ChevronsLeft, ChevronsRight, Pencil, BookOpen, History, Ship, Archive, LayoutDashboard, PieChart as PieChartIcon, Search, Shield, Trash2, LogOut, MessageSquare, Lightbulb, Activity, FileText, Volume2, VolumeX, Speaker } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { storageService } from './services/storageService';
@@ -22,66 +22,30 @@ interface AppNotification {
   read: boolean;
 }
 
-const playNotificationSound = (type: 'success' | 'info' | 'warning' | 'danger' | 'neutral') => {
-  const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-  if (!AudioContext) return;
-  const ctx = new AudioContext();
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-
-  const now = ctx.currentTime;
-
-  if (type === 'success') {
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(500, now);
-    osc.frequency.exponentialRampToValueAtTime(1000, now + 0.1);
-    gain.gain.setValueAtTime(0.1, now);
-    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
-    osc.start(now);
-    osc.stop(now + 0.5);
-  } else if (type === 'danger') {
-    // Alarm
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(100, now);
-    osc.frequency.linearRampToValueAtTime(800, now + 0.1);
-    osc.frequency.linearRampToValueAtTime(100, now + 0.2);
-    osc.frequency.linearRampToValueAtTime(800, now + 0.3);
-    gain.gain.setValueAtTime(0.2, now);
-    gain.gain.linearRampToValueAtTime(0.01, now + 0.6);
-    osc.start(now);
-    osc.stop(now + 0.6);
-  } else if (type === 'warning') {
-    osc.type = 'square';
-    osc.frequency.setValueAtTime(300, now);
-    gain.gain.setValueAtTime(0.1, now);
-    gain.gain.linearRampToValueAtTime(0.01, now + 0.3);
-    osc.start(now);
-    osc.stop(now + 0.3);
-  } else if (type === 'info') {
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(800, now);
-    gain.gain.setValueAtTime(0.05, now);
-    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
-    osc.start(now);
-    osc.stop(now + 0.2);
-  } else {
-    // Neutral
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(200, now);
-    gain.gain.setValueAtTime(0.05, now);
-    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
-    osc.start(now);
-    osc.stop(now + 0.1);
+const playNotificationSound = (message: string, soundEnabled: boolean) => {
+  if (!soundEnabled) return;
+  
+  let soundUrl = '';
+  const msgUpper = message.toUpperCase();
+  
+  if (msgUpper.includes('CHECKLIST REALIZADO')) {
+    // Alerta sonoro mais longo e chamativo (success/double notification)
+    soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
+  } else if (msgUpper.includes('ESCALA CRIADA') || msgUpper.includes('ESCALA EXCLUÍDA')) {
+    // Pop curto e discreto
+    soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3';
+  }
+  
+  if (soundUrl) {
+    const audio = new Audio(soundUrl);
+    audio.play().catch(e => console.log('Audio playback blocked:', e));
   }
 };
 
 const addNotification = async (type: AppNotification['type'], message: string) => {
   try {
     await storageService.addNotification(message, type);
-    // Remove local storage event, handled by realtime listeners now
-    playNotificationSound(type);
+    // Sound is now handled by the realtime listener in Dashboard to allow all users to hear it
   } catch (error) {
     console.error('Failed to save notification:', error);
   }
@@ -133,7 +97,7 @@ interface EscalaItem {
   bau2?: string;
   destino?: string;
   tipo_veiculo: 'Rodo Trem' | 'Bau';
-  checklist_status: 'Checklist OK' | 'Checklist Vencido' | 'Negativado' | 'Precisa de Manutenção';
+  checklist_status: 'Checklist OK' | 'Checklist Vencido' | 'Negativado' | 'Liberado para 1 viagem';
   liberacao_status?: string;
   agendamento_status?: string;
   yard_status?: string; // Deprecated
@@ -187,11 +151,11 @@ interface BauExpedicao {
 }
 
 // --- AUTHENTICATION ---
-const USERS: Record<string, { password: string; role: string }> = {
-  '3cmot': { password: 'frota3c28', role: 'veiculos' },
-  'gr3c': { password: 'grsantaluzia3c7', role: 'admin' },
-  '3clog': { password: 'grlogistica', role: 'docas' },
-  'jeff': { password: '#trescafe27', role: 'admin' },
+const USERS: Record<string, { password: string; role: string; name: string }> = {
+  '3cmot': { password: 'frota3c28', role: 'veiculos', name: 'Motorista 3C' },
+  'gr3c': { password: 'grsantaluzia3c7', role: 'admin', name: 'GR Santa Luzia' },
+  '3clog': { password: 'grlogistica', role: 'docas', name: 'Logística 3C' },
+  'jeff': { password: '#trescafe27', role: 'admin', name: 'Jeff' },
 };
 
 // --- MAIN APP COMPONENT ---
@@ -577,7 +541,7 @@ function VeiculosPage({ setPage, currentUser }: { setPage: (page: any) => void; 
                           </div>
 
                           {/* Pergunta 3: Se o checklist estiver vencido, perguntar se está atrelado */}
-                          {(item.checklist_status === 'Checklist Vencido' || item.checklist_status === 'Negativado' || item.checklist_status === 'Precisa de Manutenção') && (
+                          {(item.checklist_status === 'Checklist Vencido' || item.checklist_status === 'Negativado' || item.checklist_status === 'Liberado para 1 viagem') && (
                             <motion.div
                               initial={{ opacity: 0, y: 10 }}
                               animate={{ opacity: 1, y: 0 }}
@@ -609,6 +573,15 @@ function VeiculosPage({ setPage, currentUser }: { setPage: (page: any) => void; 
 
 function DashboardPage({ onNavigate, onLogout }: { onNavigate: (page: any) => void; onLogout: () => void }) {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    return localStorage.getItem('frota_sound_enabled') !== 'false';
+  });
+  const [newNotifIds, setNewNotifIds] = useState<Set<string>>(new Set());
+  const isInitialLoad = useRef(true);
+
+  useEffect(() => {
+    localStorage.setItem('frota_sound_enabled', soundEnabled.toString());
+  }, [soundEnabled]);
 
   useEffect(() => {
     const q = query(
@@ -617,17 +590,46 @@ function DashboardPage({ onNavigate, onLogout }: { onNavigate: (page: any) => vo
       limit(10)
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setNotifications(snapshot.docs.map(doc => {
+      const fetchedDocs = snapshot.docs.map(doc => {
           const data = doc.data() as any;
           return {
             id: doc.id,
             ...data,
             timestamp: data.timestamp?.toDate ? data.timestamp.toDate().toISOString() : data.timestamp
           } as AppNotification;
-      }));
+      });
+
+      if (!isInitialLoad.current) {
+        snapshot.docChanges().forEach(change => {
+            if (change.type === 'added') {
+                const data = change.doc.data() as any;
+                const id = change.doc.id;
+                
+                playNotificationSound(data.message, soundEnabled);
+                
+                // Track for blinking icon
+                setNewNotifIds(prev => {
+                    const next = new Set(prev);
+                    next.add(id);
+                    return next;
+                });
+                
+                setTimeout(() => {
+                    setNewNotifIds(prev => {
+                        const next = new Set(prev);
+                        next.delete(id);
+                        return next;
+                    });
+                }, 5000);
+            }
+        });
+      }
+
+      setNotifications(fetchedDocs);
+      isInitialLoad.current = false;
     });
     return () => unsubscribe();
-  }, []);
+  }, [soundEnabled]);
 
   const sections = [
     { id: 'checklist', label: 'Checklist', icon: CheckCircle, description: 'Segurança em primeiro lugar!', color: 'text-emerald-400' },
@@ -665,10 +667,35 @@ function DashboardPage({ onNavigate, onLogout }: { onNavigate: (page: any) => vo
 
       {/* Notifications Panel */}
       <div className="w-full max-w-4xl mb-8">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-2 h-2 rounded-full bg-coffee-red animate-pulse" />
-          <h3 className="text-xs font-black text-slate-500 uppercase tracking-[0.2em]">Notificações Operacionais</h3>
+        <div className="flex items-center justify-between mb-4 px-2">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-coffee-red animate-pulse" />
+            <h3 className="text-xs font-black text-slate-500 uppercase tracking-[0.2em]">Notificações Operacionais</h3>
+          </div>
+          
+          <button 
+            onClick={() => setSoundEnabled(!soundEnabled)}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all ${
+              soundEnabled 
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/20' 
+                : 'bg-slate-800 border-slate-700 text-slate-500 hover:bg-slate-700'
+            }`}
+            title={soundEnabled ? "Silenciar Alertas" : "Ativar Alertas"}
+          >
+            {soundEnabled ? (
+              <>
+                <Volume2 size={14} />
+                <span className="text-[9px] font-black uppercase tracking-widest">Sons Ativos</span>
+              </>
+            ) : (
+              <>
+                <VolumeX size={14} />
+                <span className="text-[9px] font-black uppercase tracking-widest">Mudo</span>
+              </>
+            )}
+          </button>
         </div>
+        
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {notifications.length === 0 ? (
             <div className="col-span-full bg-white/5 border border-white/10 rounded-2xl p-6 text-center">
@@ -681,7 +708,7 @@ function DashboardPage({ onNavigate, onLogout }: { onNavigate: (page: any) => vo
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: idx * 0.1 }}
-                className={`bg-white/5 border-l-2 rounded-r-xl p-4 flex items-start gap-3 ${
+                className={`bg-white/5 border-l-2 rounded-r-xl p-4 flex items-start gap-3 relative overflow-hidden group ${
                   notif.type === 'success' ? 'border-emerald-500 bg-emerald-500/5' :
                   notif.type === 'danger' ? 'border-rose-500 bg-rose-500/5' :
                   notif.type === 'warning' ? 'border-amber-500 bg-amber-500/5' :
@@ -689,6 +716,24 @@ function DashboardPage({ onNavigate, onLogout }: { onNavigate: (page: any) => vo
                   'border-slate-500 bg-slate-500/5'
                 }`}
               >
+                {newNotifIds.has(notif.id) && (
+                   <div className="absolute top-2 right-2">
+                     <motion.div
+                       animate={{ 
+                         scale: [1, 1.2, 1],
+                         opacity: [0.5, 1, 0.5]
+                       }}
+                       transition={{ 
+                         repeat: Infinity,
+                         duration: 1
+                       }}
+                       className="text-emerald-500"
+                     >
+                       <Speaker size={12} />
+                     </motion.div>
+                   </div>
+                )}
+                
                 <div className={`mt-0.5 ${
                   notif.type === 'success' ? 'text-emerald-500' :
                   notif.type === 'danger' ? 'text-rose-500' :
@@ -976,7 +1021,10 @@ const ExpedicaoShiftChart = ({ data }: { data: FrotaItem[] }) => {
 function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; currentUser: string }) {
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
+  const [userProfiles, setUserProfiles] = useState<Record<string, string>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const isAdmin = currentUser === 'jeff' || (currentUser && USERS[currentUser]?.role === 'admin');
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -985,10 +1033,29 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
   useEffect(scrollToBottom, [messages]);
 
   useEffect(() => {
+    const fetchProfiles = async () => {
+      try {
+        const querySnapshot = await getDocs(collection(db, 'users'));
+        const profiles: Record<string, string> = {};
+        querySnapshot.forEach((doc) => {
+          const data = doc.data();
+          if (data.username) {
+            profiles[data.username] = data.name || data.displayName || data.username;
+          }
+        });
+        setUserProfiles(profiles);
+      } catch (err) {
+        console.error("Failed to fetch user profiles:", err);
+      }
+    };
+    fetchProfiles();
+  }, []);
+
+  useEffect(() => {
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const q = query(
       collection(db, 'chat_messages'),
-      where('timestamp', '>=', twentyFourHoursAgo),
+      where('isDeleted', '==', false),
       orderBy('timestamp', 'asc')
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -1001,18 +1068,18 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
         
         setMessages(fetchedMessages.map((msg: any) => {
             const msgDate = msg.timestamp?.toDate();
-            // Re-apply strict security constraint: Author AND < 5 mins AND not already deleted
-            const canEditDelete = msg.id_usuario === currentUser && 
-                                 msgDate && 
-                                 (now - msgDate.getTime()) < 5 * 60 * 1000 &&
-                                 !msg.isDeleted;
+            const isOwner = msg.id_usuario === currentUser;
+            const isWithin24h = msgDate && (now - msgDate.getTime()) < 24 * 60 * 60 * 1000;
+
+            // Admin can delete/edit anything. Owner can delete/edit within 24h.
+            const canEditDelete = isAdmin || (isOwner && isWithin24h);
 
             return {
                 id: msg.id,
                 user: msg.usuario,
                 text: msg.texto,
                 time: msgDate?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '',
-                isMe: msg.id_usuario === currentUser,
+                isMe: isOwner,
                 canEditDelete,
                 isEdited: msg.isEdited,
                 isDeleted: msg.isDeleted
@@ -1020,7 +1087,11 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
         }));
     });
     return () => unsubscribe();
-  }, [currentUser]);
+  }, [currentUser, isAdmin]);
+
+  const getUserDisplayName = (username: string) => {
+    return userProfiles[username] || USERS[username]?.name || username;
+  };
 
   const handleSendMessage = async (e: FormEvent) => {
     e.preventDefault();
@@ -1035,7 +1106,7 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
             isEdited: false,
             isDeleted: false
         });
-        await storageService.addNotification(`Nova mensagem de ${currentUser} no chat`, 'info');
+        await storageService.addNotification(`Nova mensagem de ${getUserDisplayName(currentUser)} no chat`, 'info');
         setNewMessage('');
     } catch (error) {
         console.error('Error sending message:', error);
@@ -1055,6 +1126,17 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
     }
   };
 
+  const handleClearChat = async () => {
+    if (confirm("ATENÇÃO: Você deseja apagar TODO o histórico de mensagens para todos?")) {
+      try {
+        await storageService.clearChatHistory();
+        alert("Chat limpo com sucesso!");
+      } catch (error) {
+        console.error("Failed to clear chat:", error);
+      }
+    }
+  };
+
   return (
     <div className="p-4 md:p-8 space-y-6 flex-1 flex flex-col h-full bg-coffee-dark">
       <div className="flex items-center justify-between border-b border-white/5 pb-4 flex-shrink-0">
@@ -1065,34 +1147,47 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
           </div>
           <h1 translate="no" className="text-2xl font-black text-white tracking-tighter">CHAT DA EQUIPE</h1>
         </div>
-        <button 
-          onClick={() => setPage('dashboard')}
-          className="h-9 px-4 bg-white/5 text-slate-400 hover:text-white rounded-xl flex items-center gap-2 font-black text-[9px] uppercase tracking-widest transition-all"
-        >
-          <Home size={14} /> <span className="hidden sm:inline">Início</span>
-        </button>
+        <div className="flex items-center gap-3">
+          {isAdmin && (
+            <button 
+              onClick={handleClearChat}
+              className="h-9 px-4 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white border border-rose-500/20 rounded-xl flex items-center gap-2 font-black text-[9px] uppercase tracking-widest transition-all shadow-lg shadow-rose-500/10"
+              title="Limpar Histórico Completo"
+            >
+              <Trash2 size={14} /> <span>Limpar Tudo</span>
+            </button>
+          )}
+          <button 
+            onClick={() => setPage('dashboard')}
+            className="h-9 px-4 bg-white/5 text-slate-400 hover:text-white rounded-xl flex items-center gap-2 font-black text-[9px] uppercase tracking-widest transition-all"
+          >
+            <Home size={14} /> <span className="hidden sm:inline">Início</span>
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 bg-white/5 border border-white/10 rounded-3xl flex flex-col overflow-hidden relative">
-        <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
           {messages.map((msg: any) => (
             <div key={msg.id} className={`flex flex-col ${msg.isMe ? 'items-end' : 'items-start'}`}>
-              <div className={`flex items-end gap-2 max-w-[80%] ${msg.isMe ? 'flex-row-reverse' : 'flex-row'}`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black uppercase flex-shrink-0 ${msg.isMe ? 'bg-coffee-red text-white' : 'bg-slate-700 text-slate-300'}`}>
-                  {msg.user.substring(0, 2)}
-                </div>
-                <div className={`p-3 rounded-2xl text-xs leading-relaxed flex items-center gap-2 relative ${msg.isMe ? 'bg-coffee-red text-white rounded-tr-none' : 'bg-slate-800 text-slate-300 rounded-tl-none'} ${msg.isDeleted ? 'italic text-slate-500 bg-slate-900 border border-slate-800' : ''}`}>
+              {/* Display full name above bubble */}
+              <span className={`text-[9px] font-black uppercase tracking-widest mb-1.5 px-1 ${msg.isMe ? 'text-coffee-red' : 'text-slate-500'}`}>
+                {getUserDisplayName(msg.user)}
+              </span>
+              
+              <div className={`flex items-end gap-2 max-w-[85%] ${msg.isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+                <div className={`p-3 rounded-2xl text-[11px] leading-relaxed flex items-center gap-2 relative ${msg.isMe ? 'bg-coffee-red text-white' : 'bg-slate-800 text-slate-300'} ${msg.isDeleted ? 'italic text-slate-500 bg-slate-900 border border-slate-800 line-through' : ''}`}>
                   {msg.text}
-                  {msg.isEdited && <span className="text-[9px] opacity-70">(editada)</span>}
+                  {msg.isEdited && <span className="text-[8px] opacity-60">(editada)</span>}
                   {msg.canEditDelete && (
-                    <div className="absolute -top-3 -right-3 flex gap-1 items-center bg-black/60 rounded-full p-1.5 z-50 border border-white/10 shadow-lg">
-                      <button onClick={() => handleEdit(msg.id, msg.text)} className="text-yellow-400 hover:text-yellow-200 transition-colors"><Pencil size={12} /></button>
-                      <button onClick={() => handleDelete(msg.id)} className="text-red-400 hover:text-red-200 transition-colors"><Trash2 size={12} /></button>
+                    <div className="absolute -top-3 -right-3 flex gap-1 items-center bg-black/80 rounded-full p-1 z-50 border border-white/10 shadow-xl opacity-0 hover:opacity-100 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => handleEdit(msg.id, msg.text)} className="p-1 text-yellow-400 hover:text-yellow-200 transition-colors"><Pencil size={10} /></button>
+                      <button onClick={() => handleDelete(msg.id)} className="p-1 text-red-400 hover:text-red-200 transition-colors"><Trash2 size={10} /></button>
                     </div>
                   )}
                 </div>
               </div>
-              <span className="text-[9px] text-slate-600 font-bold mt-1 px-12">{msg.time}</span>
+              <span className="text-[8px] text-slate-600 font-bold mt-1.5 px-1">{msg.time}</span>
             </div>
           ))}
           <div ref={messagesEndRef} />
@@ -1543,7 +1638,7 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
   const getEffectiveStatus = (status: string, validade: string | null) => {
     const now = new Date();
     if (status === 'Negativado') return 'Negativado';
-    if (status === 'Precisa de Manutenção') return 'Precisa de Manutenção';
+    if (status === 'Liberado para 1 viagem') return 'Liberado para 1 viagem';
     if (validade && new Date(validade) < now) return 'Checklist Vencido';
     return 'Checklist OK';
   };
@@ -2123,7 +2218,7 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
               <option value="Checklist OK">Checklist OK</option>
               <option value="Checklist Vencido">Checklist Vencido</option>
               <option value="Negativado">Negativado</option>
-              <option value="Precisa de Manutenção">Manutenção</option>
+              <option value="Liberado para 1 viagem">Liberado para 1 viagem</option>
             </select>
 
             <div className="flex gap-6 text-[10px] font-bold uppercase tracking-widest ml-4">
@@ -2295,7 +2390,7 @@ const EscalaCard = ({ item, index, isExpanded, onToggle, onUpdate, onEdit, onOpt
     'Checklist OK': 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
     'Checklist Vencido': 'bg-amber-500/10 text-amber-500 border-amber-500/20',
     'Negativado': 'bg-rose-500/10 text-rose-500 border-rose-500/20',
-    'Precisa de Manutenção': 'bg-orange-500/10 text-orange-500 border-orange-500/20',
+    'Liberado para 1 viagem': 'bg-orange-500/10 text-orange-500 border-orange-500/20',
   };
 
   const handleToggleAtrelado = async (val: 'Sim' | 'Não') => {
@@ -2430,7 +2525,7 @@ const EscalaCard = ({ item, index, isExpanded, onToggle, onUpdate, onEdit, onOpt
             {item.checklist_status === 'Checklist OK' && <CheckCircle size={10} />}
             {item.checklist_status === 'Checklist Vencido' && <AlertTriangle size={10} />}
             {item.checklist_status === 'Negativado' && <XCircle size={10} />}
-            {item.checklist_status === 'Precisa de Manutenção' && <Wrench size={10} />}
+            {item.checklist_status === 'Liberado para 1 viagem' && <Wrench size={10} />}
             <span className="hidden sm:inline">{item.checklist_status}</span>
             <span className="sm:hidden">{item.checklist_status.split(' ')[0]}</span>
           </div>
@@ -2506,7 +2601,7 @@ const EscalaCard = ({ item, index, isExpanded, onToggle, onUpdate, onEdit, onOpt
                         <option value="Manutenção" className="bg-slate-800 text-white">Manutenção</option>
                         <option value="Documentação" className="bg-slate-800 text-white">Documentação</option>
                         <option value="Negativado" className="bg-slate-800 text-white">Negativado</option>
-                        <option value="Precisa de Manutenção" className="bg-slate-800 text-white">Precisa de Manutenção</option>
+                        <option value="Liberado para 1 viagem" className="bg-slate-800 text-white">Liberado para 1 viagem</option>
                       </select>
                     </motion.div>
                   )}
@@ -2636,7 +2731,7 @@ function ChecklistPage({ setPage, currentUser }: { setPage: (page: any) => void;
   const getStatusColor = (status: string, validade: string | null) => {
     const now = new Date();
     if (status === 'Negativado') return 'bg-rose-500/10 text-rose-500 border-rose-500/20';
-    if (status === 'Precisa de Manutenção') return 'bg-orange-500/10 text-orange-500 border-orange-500/20';
+    if (status === 'Liberado para 1 viagem') return 'bg-orange-500/10 text-orange-500 border-orange-500/20';
     if (validade && new Date(validade) < now) return 'bg-rose-500/10 text-rose-500 border-rose-500/20';
     if (status === 'Checklist OK') return 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
     return 'bg-slate-500/10 text-slate-500 border-slate-500/20';
@@ -2645,7 +2740,7 @@ function ChecklistPage({ setPage, currentUser }: { setPage: (page: any) => void;
   const getEffectiveStatus = (status: string, validade: string | null) => {
     const now = new Date();
     if (status === 'Negativado') return 'Negativado';
-    if (status === 'Precisa de Manutenção') return 'Precisa de Manutenção';
+    if (status === 'Liberado para 1 viagem') return 'Liberado para 1 viagem';
     if (validade && new Date(validade) < now) return 'Checklist Vencido';
     return status;
   };
@@ -2746,9 +2841,9 @@ function ChecklistPage({ setPage, currentUser }: { setPage: (page: any) => void;
                   />
                   <SelectField 
                     label="Restrição Manual" 
-                    value={['Negativado', 'Precisa de Manutenção'].includes(newStatus) ? newStatus : 'Nenhuma'} 
+                    value={['Negativado', 'Liberado para 1 viagem'].includes(newStatus) ? newStatus : 'Nenhuma'} 
                     onChange={(e) => setNewStatus(e.target.value === 'Nenhuma' ? 'Checklist OK' : e.target.value)} 
-                    options={['Nenhuma', 'Negativado', 'Precisa de Manutenção']} 
+                    options={['Nenhuma', 'Negativado', 'Liberado para 1 viagem']} 
                   />
                   <div className="flex flex-col gap-1">
                     <label className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Validade</label>
@@ -3507,7 +3602,7 @@ function DocasPage({ setPage, currentUser }: { setPage: (page: any) => void; cur
                             label="Operação"
                             value={viewMode === 'stage' ? 'Descarregar' : (item.bau1_doca_action || '')}
                             onChange={(e) => handleUpdateDoca(item.id, 'bau1_doca_action', e.target.value)}
-                            options={viewMode === 'stage' ? ['Descarregar'] : ((item.checklist_status === 'Checklist Vencido' || item.checklist_status === 'Negativado' || item.checklist_status === 'Precisa de Manutenção') ? ['Descarregar'] : ['Mais Pesado', 'Mais Leve'])}
+                            options={viewMode === 'stage' ? ['Descarregar'] : ((item.checklist_status === 'Checklist Vencido' || item.checklist_status === 'Negativado' || item.checklist_status === 'Liberado para 1 viagem') ? ['Descarregar'] : ['Mais Pesado', 'Mais Leve'])}
                             placeholder="Ação..."
                             disabled={!canEdit || viewMode === 'stage'}
                           />
@@ -3550,7 +3645,7 @@ function DocasPage({ setPage, currentUser }: { setPage: (page: any) => void; cur
                             label="Operação"
                             value={viewMode === 'stage' ? 'Descarregar' : (item.bau2_doca_action || '')}
                             onChange={(e) => handleUpdateDoca(item.id, 'bau2_doca_action', e.target.value)}
-                            options={viewMode === 'stage' ? ['Descarregar'] : ((item.checklist_status === 'Checklist Vencido' || item.checklist_status === 'Negativado' || item.checklist_status === 'Precisa de Manutenção') ? ['Descarregar'] : ['Mais Pesado', 'Mais Leve'])}
+                            options={viewMode === 'stage' ? ['Descarregar'] : ((item.checklist_status === 'Checklist Vencido' || item.checklist_status === 'Negativado' || item.checklist_status === 'Liberado para 1 viagem') ? ['Descarregar'] : ['Mais Pesado', 'Mais Leve'])}
                             placeholder="Ação..."
                             disabled={!canEdit || viewMode === 'stage'}
                           />

@@ -99,6 +99,16 @@ export const storageService = {
     });
   },
 
+  async clearChatHistory() {
+    const q = query(collection(db, 'chat_messages'), where('isDeleted', '==', false));
+    const snapshot = await getDocs(q);
+    const batch = snapshot.docs.map(d => updateDoc(d.ref, {
+      texto: "Esta mensagem foi apagada pelo administrador",
+      isDeleted: true
+    }));
+    await Promise.all(batch);
+  },
+
   async clearNotifications() {
     const querySnapshot = await getDocs(collection(db, COLLECTIONS.NOTIFICATIONS));
     await Promise.all(querySnapshot.docs.map(doc => deleteDoc(doc.ref)));
