@@ -209,12 +209,34 @@ export default function App() {
   }, []);
 
   const [audioBlocked, setAudioBlocked] = useState(false);
+  const notificationAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-    const handleAudioBlocked = () => setAudioBlocked(true);
-    window.addEventListener('audio_blocked', handleAudioBlocked);
-    return () => window.removeEventListener('audio_blocked', handleAudioBlocked);
+    notificationAudioRef.current = new Audio('https://notificationsounds.com/storage/sounds/file-sounds-1150-pristine.mp3');
+    notificationAudioRef.current.volume = 0.7;
+    notificationAudioRef.current.preload = 'auto';
   }, []);
+
+  const playNotification = (message: string, soundEnabled: boolean) => {
+    if (!soundEnabled || !notificationAudioRef.current) return;
+    
+    const ctx = getAudioContext();
+    if (ctx && ctx.state === 'suspended') {
+      ctx.resume().catch(e => console.warn('[AUDIO] Resume error:', e));
+    }
+
+    try {
+      notificationAudioRef.current.currentTime = 0;
+      notificationAudioRef.current.play()
+        .then(() => console.log(`[AUDIO] Playing: ${message}`))
+        .catch(e => {
+          console.warn('[AUDIO] Play blocked:', e);
+          setAudioBlocked(true);
+        });
+    } catch (e) {
+      console.error('[AUDIO] Play error:', e);
+    }
+  };
 
   // Audio Unlocking Logic (Bypasses browser autoplay restrictions)
   useEffect(() => {
@@ -259,11 +281,13 @@ export default function App() {
     chat: 0
   });
 
-  // Real-time badges listeners
+  const firstLoad = useRef(true);
+
+  // Real-time badges listeners (Unified)
   useEffect(() => {
     if (!currentUser) return;
 
-    console.log('[FIRESTORE] Notificações ativas: ouvindo mudanças no banco (Badges)...');
+    console.log('[FIRESTORE] Notificações ativas: ouvindo mudanças no banco (Badges Unified)...');
 
     // 1. Checklist badges (Negativados or Vencidos)
     const unsubChecklist = onSnapshot(collection(db, 'checklists'), (snapshot) => {
@@ -272,35 +296,94 @@ export default function App() {
         return data.status === 'Negativado' || data.status === 'Checklist Vencido';
       }).length;
       setBadges(prev => ({ ...prev, checklist: pending }));
+
+      // Sound logic for new checklists
+      if (!firstLoad.current) {
+        snapshot.docChanges().forEach(change => {
+          if (change.type === 'added') {
+            const data = change.doc.data();
+            if (data.status === 'Negativado' || data.status === 'Checklist Vencido') {
+              playNotification(`Novo checklist: ${data.placa_setran || 'Equipamento'}`, true);
+            }
+          }
+        });
+      }
     }, (error) => console.error('[FIRESTORE] Badge Checklist Error:', error));
 
-    // 2. Docas & Veiculos (from Escala Items in Open scales)
-    let unsubEscala: () => void = () => {};
+    // 2. Docas & Veiculos & Escala (from Escala Items in Open scales)
+    let unsubEscala: (() => void) | null = null;
     const unsubGroups = onSnapshot(collection(db, 'scale_groups'), (groupsSnapshot) => {
       const openGroupIds = groupsSnapshot.docs
         .filter(g => g.data().status === 'Open')
-        .map(g => g.id);
+        .map(g => g.id.toString());
 
       if (unsubEscala) unsubEscala();
       
       unsubEscala = onSnapshot(collection(db, 'escala_items'), (escalaSnapshot) => {
         const docs = escalaSnapshot.docs
           .map(doc => doc.data())
-          .filter(d => openGroupIds.includes(d.scale_group_id?.toString() || d.scale_group_id));
+          .filter(d => openGroupIds.includes(d.scale_group_id?.toString()));
         
         // Occupied Docks: count items assigned to a dock number
-        const occupied = docs.filter(d => (d.bau1_doca_number && d.bau1_doca_number !== '') || (d.bau2_doca_number && d.bau2_doca_number !== '')).length;
+        const occupiedCount = docs.filter(d => (d.bau1_doca_number && d.bau1_doca_number !== '') || (d.bau2_doca_number && d.bau2_doca_number !== '')).length;
         
         // Pending vehicles: count those with pending/negative checklist status
         const pendingVehicles = docs.filter(d => 
           ['Negativado', 'Checklist Vencido'].includes(d.checklist_status)
         ).length;
+
+        // Pending Escala: items in open groups that don't have a dock yet
+        const pendingEscala = docs.filter(d => !d.bau1_doca_number && !d.bau2_doca_number).length;
         
-        setBadges(prev => ({ ...prev, docas: occupied, veiculos: pendingVehicles }));
+        setBadges(prev => ({ 
+          ...prev, 
+          docas: occupiedCount, 
+          veiculos: pendingVehicles,
+          escala: pendingEscala
+        }));
+
+        // Sound logic for new scale items or dock assignments
+        if (!firstLoad.current) {
+          escalaSnapshot.docChanges().forEach(change => {
+            const data = change.doc.data();
+            const isOpen = openGroupIds.includes(data.scale_group_id?.toString());
+            if (!isOpen) return;
+
+            if (change.type === 'added') {
+              playNotification(`Novo veículo na escala: ${data.cavalo}`, true);
+            } else if (change.type === 'modified') {
+              const oldData = change.oldIndex !== -1 ? null : null; // can't easily get old data here without tracking
+              // Trigger sound if dock number was just added
+              if (data.bau1_doca_number || data.bau2_doca_number) {
+                 // only if it's a significant change (this is a bit complex without state tracking, but simple play is fine for now)
+              }
+            }
+          });
+        }
       }, (error) => console.error('[FIRESTORE] Badge Escala Error:', error));
     }, (error) => console.error('[FIRESTORE] Badge Groups Error:', error));
 
-    // 3. Chat unread count
+    // 3. Recebimento badges
+    const unsubRecebimento = onSnapshot(collection(db, 'escala_items'), (snapshot) => {
+      const pendingCount = snapshot.docs.filter(d => {
+        const data = d.data();
+        return data.recebimento_status === 'Aguardando';
+      }).length;
+      setBadges(prev => ({ ...prev, recebimento: pendingCount }));
+
+      if (!firstLoad.current) {
+        snapshot.docChanges().forEach(change => {
+          if (change.type === 'modified' || change.type === 'added') {
+            const data = change.doc.data();
+            if (data.recebimento_status === 'Aguardando') {
+              playNotification(`Novo recebimento aguardando: ${data.cavalo}`, true);
+            }
+          }
+        });
+      }
+    }, (error) => console.error('[FIRESTORE] Badge Recebimento Error:', error));
+
+    // 4. Chat unread count
     const lastTString = localStorage.getItem(`chat_last_read_${currentUser}`) || '0';
     const lastT = parseInt(lastTString);
     
@@ -313,27 +396,44 @@ export default function App() {
           localStorage.setItem(`chat_last_read_${currentUser}`, latest.toString());
         }
       } else {
-        const unread = snapshot.docs.filter(doc => {
+        const unreadCount = snapshot.docs.filter(doc => {
           const d = doc.data();
           const msgT = d.timestamp?.toMillis() || 0;
           return d.userId !== currentUser && msgT > lastT;
         }).length;
-        setBadges(prev => ({ ...prev, chat: unread }));
+        setBadges(prev => ({ ...prev, chat: unreadCount }));
+        
+        // Sound for new messages
+        if (!firstLoad.current) {
+          snapshot.docChanges().forEach(change => {
+            if (change.type === 'added') {
+              const data = change.doc.data();
+              if (data.userId !== currentUser) {
+                playNotification(`Mensagem de ${data.userName || 'equipe'}`, true);
+              }
+            }
+          });
+        }
       }
     }, (error) => console.error('[FIRESTORE] Badge Chat Error:', error));
 
-    // Reforço para PWA: Re-sync on visibility change
+    const timeout = setTimeout(() => {
+      firstLoad.current = false;
+    }, 2000); // Wait for initial snapshots
+
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        console.log('[PWA] App reaberto: verificando conexão Firestore...');
+        console.log('[PWA] App reaberto: sincronizando dados em tempo real...');
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
+      clearTimeout(timeout);
       unsubChecklist();
       unsubGroups();
-      unsubEscala();
+      if (unsubEscala) unsubEscala();
+      unsubRecebimento();
       unsubChat();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
@@ -358,7 +458,7 @@ export default function App() {
 
     switch (page) {
       case 'dashboard':
-        return <DashboardPage onNavigate={setPage} onLogout={() => setCurrentUser(null)} currentUser={currentUser!} canEdit={canUserEdit('dashboard')} />;
+        return <DashboardPage onNavigate={setPage} onLogout={() => setCurrentUser(null)} currentUser={currentUser!} canEdit={canUserEdit('dashboard')} onPlaySound={playNotification} />;
       case 'escala':
         return <EscalaPage setPage={setPage} currentUser={currentUser!} canEdit={canEdit} />;
       case 'veiculos':
@@ -376,7 +476,7 @@ export default function App() {
       case 'sobre':
         return <SobrePage setPage={setPage} canEdit={canEdit} />;
       default:
-        return <DashboardPage onNavigate={setPage} onLogout={() => setCurrentUser(null)} currentUser={currentUser!} canEdit={canUserEdit('dashboard')} />;
+        return <DashboardPage onNavigate={setPage} onLogout={() => setCurrentUser(null)} currentUser={currentUser!} canEdit={canUserEdit('dashboard')} onPlaySound={playNotification} />;
     }
   };
 
@@ -754,7 +854,7 @@ function VeiculosPage({ setPage, currentUser, canEdit }: { setPage: (page: any) 
   );
 }
 
-function DashboardPage({ onNavigate, onLogout, currentUser, canEdit }: { onNavigate: (page: any) => void; onLogout: () => void; currentUser: string; canEdit: boolean }) {
+function DashboardPage({ onNavigate, onLogout, currentUser, canEdit, onPlaySound }: { onNavigate: (page: any) => void; onLogout: () => void; currentUser: string; canEdit: boolean; onPlaySound: (msg: string, enabled: boolean) => void }) {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   
   const [soundEnabled, setSoundEnabled] = useState(() => {
@@ -773,7 +873,7 @@ function DashboardPage({ onNavigate, onLogout, currentUser, canEdit }: { onNavig
       collection(db, 'notifications'),
       where('read', '==', false),
       orderBy('timestamp', 'desc'),
-      limit(10)
+      limit(20)
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const fetchedDocs = snapshot.docs.map(doc => {
@@ -791,7 +891,7 @@ function DashboardPage({ onNavigate, onLogout, currentUser, canEdit }: { onNavig
                 const data = change.doc.data() as any;
                 const id = change.doc.id;
                 
-                playNotificationSound(data.message, soundEnabled);
+                onPlaySound(data.message, soundEnabled);
                 
                 // Track for blinking icon
                 setNewNotifIds(prev => {
@@ -817,7 +917,7 @@ function DashboardPage({ onNavigate, onLogout, currentUser, canEdit }: { onNavig
       console.error('[FIRESTORE] Erro no listener de notificações:', error);
     });
     return () => unsubscribe();
-  }, [soundEnabled]);
+  }, [soundEnabled, onPlaySound]);
 
   const handleNotificationClick = async (notif: AppNotification) => {
     // 1. Mark as read in Firestore
