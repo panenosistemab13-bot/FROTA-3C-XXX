@@ -29,16 +29,24 @@ const playNotificationSound = (message: string, soundEnabled: boolean) => {
   const msgUpper = message.toUpperCase();
   
   if (msgUpper.includes('CHECKLIST REALIZADO')) {
-    // Alerta sonoro mais longo e chamativo (success/double notification)
+    // Longer and more noticeable sound (success/double notification)
     soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
   } else if (msgUpper.includes('ESCALA CRIADA') || msgUpper.includes('ESCALA EXCLUÍDA')) {
-    // Pop curto e discreto
+    // Short and discrete pop
     soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3';
+  } else {
+    // Default notification sound for other messages
+    soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2357/2357-preview.mp3';
   }
   
   if (soundUrl) {
     const audio = new Audio(soundUrl);
-    audio.play().catch(e => console.log('Audio playback blocked:', e));
+    audio.volume = 0.5;
+    audio.play()
+      .then(() => console.log(`[AUDIO] Playback successful: ${message}`))
+      .catch(e => {
+        console.error('[AUDIO] Playback failed or blocked:', e);
+      });
   }
 };
 
@@ -189,10 +197,49 @@ export default function App() {
     return () => clearInterval(notificationCleanupInterval);
   }, []);
 
+  // Audio Unlocking Logic (Bypasses browser autoplay restrictions)
+  useEffect(() => {
+    const unlockAudio = () => {
+      const audio = new Audio();
+      // One pixel transparent silent wav
+      audio.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+      const playPromise = audio.play();
+      
+      if (playPromise !== undefined) {
+        playPromise.then(() => {
+          console.log('[AUDIO] System unlocked successfully by user interaction');
+          
+          // Resume AudioContext if it exists to be double sure
+          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+          if (AudioCtx) {
+            const tempCtx = new AudioCtx();
+            if (tempCtx.state === 'suspended') tempCtx.resume();
+          }
+
+          window.removeEventListener('mousedown', unlockAudio);
+          window.removeEventListener('touchstart', unlockAudio);
+          window.removeEventListener('keydown', unlockAudio);
+        }).catch(e => {
+          console.error('[AUDIO] Unlock failed:', e);
+        });
+      }
+    };
+
+    window.addEventListener('mousedown', unlockAudio);
+    window.addEventListener('touchstart', unlockAudio);
+    window.addEventListener('keydown', unlockAudio);
+    
+    return () => {
+      window.removeEventListener('mousedown', unlockAudio);
+      window.removeEventListener('touchstart', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+    };
+  }, []);
+
   const renderPage = () => {
     switch (page) {
       case 'dashboard':
-        return <DashboardPage onNavigate={setPage} onLogout={() => setCurrentUser(null)} />;
+        return <DashboardPage onNavigate={setPage} onLogout={() => setCurrentUser(null)} currentUser={currentUser!} />;
       case 'escala':
         return <EscalaPage setPage={setPage} currentUser={currentUser!} />;
       case 'veiculos':
@@ -210,7 +257,7 @@ export default function App() {
       case 'sobre':
         return <SobrePage setPage={setPage} />;
       default:
-        return <DashboardPage onNavigate={setPage} onLogout={() => setCurrentUser(null)} />;
+        return <DashboardPage onNavigate={setPage} onLogout={() => setCurrentUser(null)} currentUser={currentUser!} />;
     }
   };
 
@@ -571,8 +618,10 @@ function VeiculosPage({ setPage, currentUser }: { setPage: (page: any) => void; 
   );
 }
 
-function DashboardPage({ onNavigate, onLogout }: { onNavigate: (page: any) => void; onLogout: () => void }) {
+function DashboardPage({ onNavigate, onLogout, currentUser }: { onNavigate: (page: any) => void; onLogout: () => void; currentUser: string }) {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const isAdmin = currentUser === 'jeff' || (currentUser && USERS[currentUser]?.role === 'admin');
+  
   const [soundEnabled, setSoundEnabled] = useState(() => {
     return localStorage.getItem('frota_sound_enabled') !== 'false';
   });
@@ -631,6 +680,18 @@ function DashboardPage({ onNavigate, onLogout }: { onNavigate: (page: any) => vo
     return () => unsubscribe();
   }, [soundEnabled]);
 
+  const handleClearNotifications = async () => {
+    if (confirm('ATENÇÃO: Deseja apagar TODAS as notificações operacionais?')) {
+      try {
+        setNotifications([]); // Immediate UI clear
+        await storageService.clearNotifications();
+        alert('Notificações limpas com sucesso!');
+      } catch (error) {
+        console.error('Failed to clear notifications:', error);
+      }
+    }
+  };
+
   const sections = [
     { id: 'checklist', label: 'Checklist', icon: CheckCircle, description: 'Segurança em primeiro lugar!', color: 'text-emerald-400' },
     { id: 'escala', label: 'Escala', icon: Calendar, description: 'Organize o fluxo de entrada!', color: 'text-coffee-red' },
@@ -673,8 +734,20 @@ function DashboardPage({ onNavigate, onLogout }: { onNavigate: (page: any) => vo
             <h3 className="text-xs font-black text-slate-500 uppercase tracking-[0.2em]">Notificações Operacionais</h3>
           </div>
           
-          <button 
-            onClick={() => setSoundEnabled(!soundEnabled)}
+          <div className="flex items-center gap-2">
+            {isAdmin && (
+              <button 
+                onClick={handleClearNotifications}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white transition-all"
+                title="Limpar Tudo"
+              >
+                <Trash2 size={14} />
+                <span className="text-[9px] font-black uppercase tracking-widest">Limpar Tudo</span>
+              </button>
+            )}
+
+            <button 
+              onClick={() => setSoundEnabled(!soundEnabled)}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all ${
               soundEnabled 
                 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/20' 
@@ -695,8 +768,9 @@ function DashboardPage({ onNavigate, onLogout }: { onNavigate: (page: any) => vo
             )}
           </button>
         </div>
+      </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {notifications.length === 0 ? (
             <div className="col-span-full bg-white/5 border border-white/10 rounded-2xl p-6 text-center">
               <p className="text-slate-500 text-[10px] uppercase tracking-widest">Nenhuma notificação recente</p>
@@ -1052,11 +1126,10 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
   }, []);
 
   useEffect(() => {
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const q = query(
       collection(db, 'chat_messages'),
-      where('timestamp', '>=', twentyFourHoursAgo),
-      orderBy('timestamp', 'asc')
+      orderBy('timestamp', 'asc'),
+      limit(100)
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const fetchedMessages = snapshot.docs.map(doc => ({
@@ -1135,11 +1208,11 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
   const handleClearChat = async () => {
     if (confirm("ATENÇÃO: Você deseja apagar TODO o histórico de mensagens para todos?")) {
       try {
-        setMessages([]); // Force immediate UI update
+        setMessages([]); // Immediate UI reset
         await storageService.clearChatHistory();
-        alert("Chat limpo com sucesso!");
+        console.log("[CHAT] History cleared successfully in DB");
       } catch (error) {
-        console.error("Failed to clear chat:", error);
+        console.error("[CHAT] Failed to clear history:", error);
       }
     }
   };

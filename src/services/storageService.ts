@@ -100,15 +100,24 @@ export const storageService = {
   },
 
   async clearChatHistory() {
+    const { writeBatch } = await import("firebase/firestore");
     const q = collection(db, 'chat_messages');
     const snapshot = await getDocs(q);
-    const batch = snapshot.docs.map(d => deleteDoc(d.ref));
-    await Promise.all(batch);
+    const batch = writeBatch(db);
+    snapshot.docs.forEach(doc => {
+      batch.delete(doc.ref);
+    });
+    await batch.commit();
   },
 
   async clearNotifications() {
+    const { writeBatch } = await import("firebase/firestore");
     const querySnapshot = await getDocs(collection(db, COLLECTIONS.NOTIFICATIONS));
-    await Promise.all(querySnapshot.docs.map(doc => deleteDoc(doc.ref)));
+    const batch = writeBatch(db);
+    querySnapshot.docs.forEach(doc => {
+      batch.delete(doc.ref);
+    });
+    await batch.commit();
   },
 
   subscribeToDocas(callback: (items: any[]) => void) {
