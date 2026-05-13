@@ -74,11 +74,12 @@ export const storageService = {
     return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   },
 
-  async addNotification(message: string, type: 'info' | 'success' | 'warning' | 'danger' | 'neutral') {
+  async addNotification(message: string, type: 'info' | 'success' | 'warning' | 'danger' | 'neutral', isPriority: boolean = false) {
     await addDoc(collection(db, COLLECTIONS.NOTIFICATIONS), {
       message,
       type,
-      timestamp: serverTimestamp()
+      timestamp: serverTimestamp(),
+      isPriority
     });
   },
 

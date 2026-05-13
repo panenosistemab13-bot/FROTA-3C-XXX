@@ -20,6 +20,7 @@ interface AppNotification {
   message: string;
   timestamp: string;
   read: boolean;
+  isPriority?: boolean;
 }
 
 const playNotificationSound = (message: string, soundEnabled: boolean) => {
@@ -50,9 +51,9 @@ const playNotificationSound = (message: string, soundEnabled: boolean) => {
   }
 };
 
-const addNotification = async (type: AppNotification['type'], message: string) => {
+const addNotification = async (type: AppNotification['type'], message: string, isPriority: boolean = false) => {
   try {
-    await storageService.addNotification(message, type);
+    await storageService.addNotification(message, type, isPriority);
     // Sound is now handled by the realtime listener in Dashboard to allow all users to hear it
   } catch (error) {
     console.error('Failed to save notification:', error);
@@ -782,8 +783,10 @@ function DashboardPage({ onNavigate, onLogout, currentUser }: { onNavigate: (pag
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: idx * 0.1 }}
-                className={`bg-white/5 border-l-2 rounded-r-xl p-4 flex items-start gap-3 relative overflow-hidden group ${
-                  notif.type === 'success' ? 'border-emerald-500 bg-emerald-500/5' :
+                className={`bg-white/5 border-l-2 rounded-r-xl p-4 flex items-start gap-3 relative overflow-hidden group transition-all duration-500 ${
+                  notif.isPriority && newNotifIds.has(notif.id) 
+                    ? 'border-emerald-500 bg-emerald-500/20 ring-2 ring-emerald-500/50 animate-pulse' 
+                    : notif.type === 'success' ? 'border-emerald-500 bg-emerald-500/5' :
                   notif.type === 'danger' ? 'border-rose-500 bg-rose-500/5' :
                   notif.type === 'warning' ? 'border-amber-500 bg-amber-500/5' :
                   notif.type === 'info' ? 'border-cyan-500 bg-cyan-500/5' :
@@ -793,17 +796,21 @@ function DashboardPage({ onNavigate, onLogout, currentUser }: { onNavigate: (pag
                 {newNotifIds.has(notif.id) && (
                    <div className="absolute top-2 right-2">
                      <motion.div
-                       animate={{ 
+                       animate={notif.isPriority ? {
+                         scale: [1, 1.4, 1],
+                         rotate: [0, 15, -15, 0],
+                         filter: ["brightness(1)", "brightness(1.5)", "brightness(1)"]
+                       } : { 
                          scale: [1, 1.2, 1],
                          opacity: [0.5, 1, 0.5]
                        }}
                        transition={{ 
                          repeat: Infinity,
-                         duration: 1
+                         duration: notif.isPriority ? 0.5 : 1
                        }}
-                       className="text-emerald-500"
+                       className={notif.isPriority ? "text-white" : "text-emerald-500"}
                      >
-                       <Speaker size={12} />
+                       {notif.isPriority ? <CheckCircle size={14} className="drop-shadow-[0_0_8px_rgba(255,255,255,0.8)]" /> : <Speaker size={12} />}
                      </motion.div>
                    </div>
                 )}
@@ -1427,7 +1434,7 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
     unsubEscala = onSnapshot(qEscala, (snapshot) => {
       const allItems = snapshot.docs.map(doc => ({ id: Number(doc.id), ...doc.data() })) as EscalaItem[];
       
-      const itemsVencido = allItems.filter(i => i.veiculo_atrelado === 'Sim').sort((a, b) => b.id - a.id);
+      const itemsVencido = allItems.filter(i => i.veiculo_atrelado === 'Sim' && i.checklist_status !== 'Checklist OK').sort((a, b) => b.id - a.id);
       setChecklistVencidoItems(itemsVencido);
 
       if (activeGroupId) {
@@ -2465,6 +2472,7 @@ const EscalaCard = ({ item, index, isExpanded, onToggle, onUpdate, onEdit, onOpt
   const [checklistResult, setChecklistResult] = useState<'Checklist OK' | 'Negativado' | null>(null);
   const [negativadoAction, setNegativadoAction] = useState<'Liberado para 1 viagem' | 'Reprovado' | null>(null);
   const [newValidade, setNewValidade] = useState('');
+  const [showDateInput, setShowDateInput] = useState(false);
 
   const statusColors = {
     'Checklist OK': 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
@@ -2485,33 +2493,37 @@ const EscalaCard = ({ item, index, isExpanded, onToggle, onUpdate, onEdit, onOpt
   };
 
   const handleChecklistRealizadoSim = async () => {
-    // Esconder a pergunta
-    const allItems = getStorage<EscalaItem[]>(STORAGE_KEYS.ESCALA, []);
-    const updatedItems = allItems.map(i => i.id === item.id ? { ...i, checklist_realizado: 'Sim' } : i);
-    setStorage(STORAGE_KEYS.ESCALA, updatedItems);
-    
-    // Calcular validade para daqui a 6 meses
-    const novaData = new Date();
-    novaData.setMonth(novaData.getMonth() + 6);
-    const validadeStr = novaData.toISOString().split('T')[0];
+    if (!newValidade) {
+      alert("Por favor, insira a nova data de validade.");
+      return;
+    }
 
     try {
-      // Atualizar Firestore - Checklist Collection
+      // 1. Atualizar Firestore - Checklist Collection
       const checklists = await storageService.getChecklists();
       const existingChecklist = checklists.find(c => c.placa === item.cavalo);
       await storageService.saveChecklist({
         placa: item.cavalo,
         status: 'Checklist OK',
-        validade: validadeStr,
+        validade: newValidade,
         tipo: existingChecklist?.tipo || 'Cavalo',
         created_at: existingChecklist?.created_at || new Date().toISOString()
       });
 
-      // Atualizar Firestore - EscalaItem
+      // 2. Atualizar Firestore - EscalaItem
+      // Devemos atualizar o item e mudar o status para OK
       await storageService.saveEscalaItem({
         ...item,
-        checklist_status: 'Checklist OK'
+        checklist_status: 'Checklist OK',
+        checklist_realizado: 'Sim'
       });
+
+      // 3. Notificação Prioritária
+      await addNotification('success', `Checklist REALIZADO: Veículo ${item.cavalo} com nova validade ${newValidade}`, true);
+      
+      // 4. Limpar estados locais
+      setShowDateInput(false);
+      setNewValidade('');
       
       onUpdate();
     } catch (error) {
@@ -2640,8 +2652,10 @@ const EscalaCard = ({ item, index, isExpanded, onToggle, onUpdate, onEdit, onOpt
                 <div className="space-y-3">
                   <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Checklist Realizado?</h4>
                   <div className="flex gap-2">
+                    {!showDateInput ? (
+                    <>
                     <button
-                      onClick={handleChecklistRealizadoSim}
+                      onClick={() => setShowDateInput(true)}
                       className="flex-1 h-9 rounded-xl font-black text-[9px] uppercase tracking-widest transition-all border bg-emerald-500/10 text-emerald-500 border-emerald-500/30 hover:bg-emerald-500 hover:text-white"
                     >
                       Sim
@@ -2656,6 +2670,31 @@ const EscalaCard = ({ item, index, isExpanded, onToggle, onUpdate, onEdit, onOpt
                     >
                       Não
                     </button>
+                    </>
+                    ) : (
+                      <div className="flex-1 space-y-2">
+                        <div className="flex gap-2">
+                          <input 
+                            type="date" 
+                            value={newValidade}
+                            onChange={(e) => setNewValidade(e.target.value)}
+                            className="flex-1 bg-white/5 border border-white/10 rounded-xl px-2 py-1 text-[10px] text-white focus:outline-none focus:border-emerald-500"
+                          />
+                          <button
+                            onClick={handleChecklistRealizadoSim}
+                            className="px-3 h-9 rounded-xl border border-emerald-500 bg-emerald-500 text-white font-black text-[9px] uppercase tracking-widest"
+                          >
+                            Confirmar
+                          </button>
+                        </div>
+                        <button 
+                          onClick={() => setShowDateInput(false)}
+                          className="w-full text-[8px] text-slate-500 uppercase font-bold text-center"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    )}
                   </div>
                   
                   {checklistResult === 'Negativado' && (
