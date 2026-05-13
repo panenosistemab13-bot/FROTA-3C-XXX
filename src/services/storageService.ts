@@ -1,6 +1,6 @@
 
 import { db } from '../lib/firebase';
-import { collection, getDocs, doc, setDoc, deleteDoc, query, onSnapshot } from "firebase/firestore";
+import { collection, getDocs, doc, setDoc, deleteDoc, query, onSnapshot, addDoc, serverTimestamp, updateDoc, where } from "firebase/firestore";
 
 const COLLECTIONS = {
   GROUPS: 'scale_groups',
@@ -74,9 +74,25 @@ export const storageService = {
     return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   },
 
-  async saveNotification(notification: any) {
-    const notifRef = doc(collection(db, COLLECTIONS.NOTIFICATIONS));
-    await setDoc(notifRef, { ...notification, id: notifRef.id });
+  async addNotification(message: string, type: 'success' | 'alert' | 'info') {
+    await addDoc(collection(db, COLLECTIONS.NOTIFICATIONS), {
+      message,
+      type,
+      timestamp: serverTimestamp()
+    });
+  },
+
+  async updateChatMessage(id: string, newContent: string) {
+    const docRef = doc(db, 'chat_messages', id);
+    await updateDoc(docRef, {
+      message: newContent,
+      editedAt: serverTimestamp()
+    });
+  },
+
+  async deleteChatMessage(id: string) {
+    const docRef = doc(db, 'chat_messages', id);
+    await deleteDoc(docRef);
   },
 
   async clearNotifications() {

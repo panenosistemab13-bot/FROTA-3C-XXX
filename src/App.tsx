@@ -3,7 +3,7 @@ import { Truck, Plus, X, Calendar, Users, ChevronDown, ChevronUp, ChevronRight, 
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { storageService } from './services/storageService';
-import { collection, onSnapshot, query, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, query, addDoc, serverTimestamp, orderBy, limit, where } from 'firebase/firestore';
 import { db } from './lib/firebase';
 
 // --- DATA & TYPES ---
@@ -594,18 +594,22 @@ function DashboardPage({ onNavigate, onLogout }: { onNavigate: (page: any) => vo
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
   useEffect(() => {
-    const loadNotifications = () => {
-      const stored = getStorage<AppNotification[]>(STORAGE_KEYS.NOTIFICATIONS, []);
-      setNotifications(stored.slice(0, 6));
-    };
-
-    loadNotifications();
-
-    // Listen for storage changes (including our manual cleanup event)
-    const handleStorageChange = () => loadNotifications();
-    window.addEventListener('storage', handleStorageChange);
-    
-    return () => window.removeEventListener('storage', handleStorageChange);
+    const q = query(
+      collection(db, 'notifications'),
+      orderBy('timestamp', 'desc'),
+      limit(10)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setNotifications(snapshot.docs.map(doc => {
+          const data = doc.data() as any;
+          return {
+            id: doc.id,
+            ...data,
+            timestamp: data.timestamp?.toDate ? data.timestamp.toDate().toISOString() : data.timestamp
+          } as AppNotification;
+      }));
+    });
+    return () => unsubscribe();
   }, []);
 
   const sections = [
@@ -965,20 +969,34 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
   useEffect(scrollToBottom, [messages]);
 
   useEffect(() => {
-    const q = query(collection(db, 'chat_messages'));
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const q = query(
+      collection(db, 'chat_messages'),
+      where('timestamp', '>=', twentyFourHoursAgo),
+      orderBy('timestamp', 'asc')
+    );
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const fetchedMessages = snapshot.docs.map(doc => ({
             id: doc.id,
             ...doc.data()
-        } as any)).sort((a: any, b: any) => a.timestamp?.seconds - b.timestamp?.seconds);
+        } as any));
         
-        setMessages(fetchedMessages.map((msg: any) => ({
-            id: msg.id,
-            user: msg.usuario,
-            text: msg.texto,
-            time: msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '',
-            isMe: msg.id_usuario === currentUser
-        })));
+        const now = Date.now();
+        
+        setMessages(fetchedMessages.map((msg: any) => {
+            const msgDate = msg.timestamp?.toDate();
+            // Force true for testing display as requested
+            const canEditDelete = true; 
+
+            return {
+                id: msg.id,
+                user: msg.usuario,
+                text: msg.texto,
+                time: msgDate?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '',
+                isMe: msg.id_usuario === currentUser,
+                canEditDelete
+            };
+        }));
     });
     return () => unsubscribe();
   }, [currentUser]);
@@ -994,9 +1012,23 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
             id_usuario: currentUser,
             timestamp: serverTimestamp()
         });
+        await storageService.addNotification(`Nova mensagem de ${currentUser} no chat`, 'info');
         setNewMessage('');
     } catch (error) {
         console.error('Error sending message:', error);
+    }
+  };
+
+  const handleEdit = async (id: string, currentText: string) => {
+    const newText = prompt("Editar mensagem:", currentText);
+    if (newText !== null && newText !== currentText) {
+      await storageService.updateChatMessage(id, newText);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (confirm("Tem certeza que deseja excluir esta mensagem?")) {
+      await storageService.deleteChatMessage(id);
     }
   };
 
@@ -1078,14 +1110,20 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
 
       <div className="flex-1 bg-white/5 border border-white/10 rounded-3xl flex flex-col overflow-hidden relative">
         <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
-          {messages.map((msg) => (
+          {messages.map((msg: any) => (
             <div key={msg.id} className={`flex flex-col ${msg.isMe ? 'items-end' : 'items-start'}`}>
               <div className={`flex items-end gap-2 max-w-[80%] ${msg.isMe ? 'flex-row-reverse' : 'flex-row'}`}>
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black uppercase flex-shrink-0 ${msg.isMe ? 'bg-coffee-red text-white' : 'bg-slate-700 text-slate-300'}`}>
                   {msg.user.substring(0, 2)}
                 </div>
-                <div className={`p-3 rounded-2xl text-xs leading-relaxed ${msg.isMe ? 'bg-coffee-red text-white rounded-tr-none' : 'bg-slate-800 text-slate-300 rounded-tl-none'}`}>
+                <div className={`p-3 rounded-2xl text-xs leading-relaxed flex items-center gap-2 relative ${msg.isMe ? 'bg-coffee-red text-white rounded-tr-none' : 'bg-slate-800 text-slate-300 rounded-tl-none'}`}>
                   {msg.text}
+                  {msg.canEditDelete && (
+                    <div className="absolute -top-3 -right-3 flex gap-1 items-center bg-black/60 rounded-full p-1.5 z-50 border border-white/10 shadow-lg">
+                      <button onClick={() => handleEdit(msg.id, msg.text)} className="text-yellow-400 hover:text-yellow-200 transition-colors"><Pencil size={12} /></button>
+                      <button onClick={() => handleDelete(msg.id)} className="text-red-400 hover:text-red-200 transition-colors"><Trash2 size={12} /></button>
+                    </div>
+                  )}
                 </div>
               </div>
               <span className="text-[9px] text-slate-600 font-bold mt-1 px-12">{msg.time}</span>
@@ -2576,6 +2614,7 @@ function ChecklistPage({ setPage, currentUser }: { setPage: (page: any) => void;
       };
 
       await storageService.saveChecklist(newItem);
+      await storageService.addNotification(`Novo checklist realizado: ${placaUpper}`, 'success');
       fetchChecklists();
       setAddPlaca('');
       setAddValidade('');
@@ -2600,6 +2639,7 @@ function ChecklistPage({ setPage, currentUser }: { setPage: (page: any) => void;
           tipo: newTipo 
         };
         await storageService.saveChecklist(updated);
+        await storageService.addNotification(`Checklist atualizado para placa ${updated.placa}`, 'info');
         fetchChecklists();
       }
       setEditingIndex(null);
