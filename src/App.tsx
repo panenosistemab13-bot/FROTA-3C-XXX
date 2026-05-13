@@ -1055,7 +1055,7 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const q = query(
       collection(db, 'chat_messages'),
-      where('isDeleted', '==', false),
+      where('timestamp', '>=', twentyFourHoursAgo),
       orderBy('timestamp', 'asc')
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -1066,25 +1066,29 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
         
         const now = Date.now();
         
-        setMessages(fetchedMessages.map((msg: any) => {
-            const msgDate = msg.timestamp?.toDate();
-            const isOwner = msg.id_usuario === currentUser;
-            const isWithin24h = msgDate && (now - msgDate.getTime()) < 24 * 60 * 60 * 1000;
+        // Filter deleted messages in the UI logic and map to view model
+        setMessages(fetchedMessages
+            .filter((msg: any) => !msg.isDeleted)
+            .map((msg: any) => {
+                const msgDate = msg.timestamp?.toDate();
+                const isOwner = msg.id_usuario === currentUser;
+                const isWithin24h = msgDate && (now - msgDate.getTime()) < 24 * 60 * 60 * 1000;
 
-            // Admin can delete/edit anything. Owner can delete/edit within 24h.
-            const canEditDelete = isAdmin || (isOwner && isWithin24h);
+                // Admin can delete/edit anything. Owner can delete/edit within 24h.
+                const canEditDelete = isAdmin || (isOwner && isWithin24h);
 
-            return {
-                id: msg.id,
-                user: msg.usuario,
-                text: msg.texto,
-                time: msgDate?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '',
-                isMe: isOwner,
-                canEditDelete,
-                isEdited: msg.isEdited,
-                isDeleted: msg.isDeleted
-            };
-        }));
+                return {
+                    id: msg.id,
+                    user: msg.usuario,
+                    displayName: msg.nome_exibicao || getUserDisplayName(msg.id_usuario),
+                    text: msg.texto,
+                    time: msgDate?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '',
+                    isMe: isOwner,
+                    canEditDelete,
+                    isEdited: msg.isEdited,
+                    isDeleted: msg.isDeleted
+                };
+            }));
     });
     return () => unsubscribe();
   }, [currentUser, isAdmin]);
@@ -1098,15 +1102,17 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
     if (!newMessage.trim()) return;
 
     try {
+        const userDisplayName = getUserDisplayName(currentUser);
         await addDoc(collection(db, 'chat_messages'), {
             texto: newMessage,
             usuario: currentUser,
             id_usuario: currentUser,
+            nome_exibicao: userDisplayName,
             timestamp: serverTimestamp(),
             isEdited: false,
             isDeleted: false
         });
-        await storageService.addNotification(`Nova mensagem de ${getUserDisplayName(currentUser)} no chat`, 'info');
+        await storageService.addNotification(`Nova mensagem de ${userDisplayName} no chat`, 'info');
         setNewMessage('');
     } catch (error) {
         console.error('Error sending message:', error);
@@ -1172,7 +1178,7 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
             <div key={msg.id} className={`flex flex-col ${msg.isMe ? 'items-end' : 'items-start'}`}>
               {/* Display full name above bubble */}
               <span className={`text-[9px] font-black uppercase tracking-widest mb-1.5 px-1 ${msg.isMe ? 'text-coffee-red' : 'text-slate-500'}`}>
-                {getUserDisplayName(msg.user)}
+                {msg.displayName}
               </span>
               
               <div className={`flex items-end gap-2 max-w-[85%] ${msg.isMe ? 'flex-row-reverse' : 'flex-row'}`}>
