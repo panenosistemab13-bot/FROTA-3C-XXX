@@ -79,7 +79,8 @@ export const storageService = {
       message,
       type,
       timestamp: serverTimestamp(),
-      isPriority
+      isPriority,
+      read: false
     });
   },
 
@@ -117,6 +118,24 @@ export const storageService = {
     const batch = writeBatch(db);
     querySnapshot.docs.forEach(doc => {
       batch.delete(doc.ref);
+    });
+    await batch.commit();
+  },
+
+  async resetAllDocks() {
+    const { writeBatch } = await import("firebase/firestore");
+    const querySnapshot = await getDocs(collection(db, COLLECTIONS.ESCALA));
+    const batch = writeBatch(db);
+    querySnapshot.docs.forEach(document => {
+      const data = document.data();
+      if (data.bau1_doca_number || data.bau2_doca_number) {
+        batch.update(document.ref, {
+          bau1_doca_number: '',
+          bau1_doca_action: '',
+          bau2_doca_number: '',
+          bau2_doca_action: ''
+        });
+      }
     });
     await batch.commit();
   },

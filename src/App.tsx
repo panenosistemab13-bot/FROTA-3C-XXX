@@ -29,24 +29,31 @@ const playNotificationSound = (message: string, soundEnabled: boolean) => {
   let soundUrl = '';
   const msgUpper = message.toUpperCase();
   
-  if (msgUpper.includes('CHECKLIST REALIZADO')) {
-    // Longer and more noticeable sound (success/double notification)
+  // Specific patterns based on standardized prefixes
+  if (msgUpper.includes('[CHECKLIST]') && msgUpper.includes('REALIZADO')) {
+    // Longer and more noticeable sound for checklist completion
     soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3';
-  } else if (msgUpper.includes('ESCALA CRIADA') || msgUpper.includes('ESCALA EXCLUÍDA')) {
-    // Short and discrete pop
-    soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3';
-  } else {
-    // Default notification sound for other messages
+  } else if (msgUpper.includes('[CHAT]')) {
+    // Chat message sound
     soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2357/2357-preview.mp3';
+  } else if (msgUpper.includes('[ESCALA]') || msgUpper.includes('[DOCAS]')) {
+    // Discrete operational sound
+    soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3';
+  } else if (msgUpper.includes('[ADMIN]')) {
+    // Alert sound for admin operations
+    soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3';
+  } else {
+    // Default notification sound
+    soundUrl = 'https://assets.mixkit.co/active_storage/sfx/2218/2218-preview.mp3';
   }
   
   if (soundUrl) {
     const audio = new Audio(soundUrl);
     audio.volume = 0.5;
     audio.play()
-      .then(() => console.log(`[AUDIO] Playback successful: ${message}`))
+      .then(() => console.log(`[AUDIO] Playback triggered successfully: ${message}`))
       .catch(e => {
-        console.error('[AUDIO] Playback failed or blocked:', e);
+        console.error('[AUDIO] Playback failed or blocked. User interaction may be required.', e);
       });
   }
 };
@@ -1192,7 +1199,7 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
             isEdited: false,
             isDeleted: false
         });
-        await storageService.addNotification(`Nova mensagem de ${userDisplayName} no chat`, 'info');
+        await addNotification('info', `[CHAT] Mensagem de ${userDisplayName} | Horário: ${new Date().toLocaleTimeString('pt-BR')}`);
         setNewMessage('');
     } catch (error) {
         console.error('Error sending message:', error);
@@ -1659,7 +1666,7 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
       setCreationStep('date');
       setView('list');
       setActiveTab('ativas');
-      addNotification('success', `Escala criada para ${new Date(newScaleDate).toLocaleDateString('pt-BR')}`);
+      addNotification('success', `[ESCALA] Criada para ${new Date(newScaleDate).toLocaleDateString('pt-BR')} | Horário: ${new Date().toLocaleTimeString('pt-BR')}`);
       alert('Escala criada com sucesso!');
     } catch (error) {
       console.error('Failed to create scale:', error);
@@ -1710,7 +1717,7 @@ function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; cu
         await storageService.deleteEscalaItem(item.id);
       }
       
-      addNotification('success', 'Escala excluída com sucesso.');
+      addNotification('success', `[ESCALA] Excluída: ID ${id} | Horário: ${new Date().toLocaleTimeString('pt-BR')}`);
     } catch (error) {
       console.error('Failed to delete scale group:', error);
       alert('Erro ao excluir escala.');
@@ -2486,7 +2493,7 @@ const EscalaCard = ({ item, index, isExpanded, onToggle, onUpdate, onEdit, onOpt
     const updatedItems = allItems.map(i => i.id === item.id ? { ...i, veiculo_atrelado: val } : i);
     setStorage(STORAGE_KEYS.ESCALA, updatedItems);
     if (val === 'Sim') {
-      addNotification('info', `Veículo ${item.cavalo} atrelado e movido para Checklist Vencido`);
+      addNotification('info', `[ESCALA] Veículo: ${item.cavalo} | Status: Atrelado e movido para Checklist Vencido | Horário: ${new Date().toLocaleTimeString('pt-BR')}`);
       alert(`Veículo ${item.cavalo} atrelado! Pendência enviada para a aba Checklist Vencido.`);
     }
     onUpdate();
@@ -2519,7 +2526,7 @@ const EscalaCard = ({ item, index, isExpanded, onToggle, onUpdate, onEdit, onOpt
       });
 
       // 3. Notificação Prioritária
-      await addNotification('success', `Checklist REALIZADO: Veículo ${item.cavalo} com nova validade ${newValidade}`, true);
+      await addNotification('success', `VEÍCULO ${item.cavalo} CHECKLIST REALIZADO (VALIDADE: ${newValidade})`, true);
       
       // 4. Limpar estados locais
       setShowDateInput(false);
@@ -2549,6 +2556,8 @@ const EscalaCard = ({ item, index, isExpanded, onToggle, onUpdate, onEdit, onOpt
         ...item,
         checklist_status: restricao as any
       });
+      
+      await addNotification('warning', `VEÍCULO ${item.cavalo} NEGATIVADO (${restricao})`);
       
       onUpdate();
     } catch (error) {
@@ -2795,7 +2804,7 @@ function ChecklistPage({ setPage, currentUser }: { setPage: (page: any) => void;
       };
 
       await storageService.saveChecklist(newItem);
-      await storageService.addNotification(`Novo checklist realizado: ${placaUpper}`, 'success');
+      await addNotification('success', `VEÍCULO ${placaUpper} NOVO CHECKLIST`);
       fetchChecklists();
       setAddPlaca('');
       setAddValidade('');
@@ -2820,7 +2829,7 @@ function ChecklistPage({ setPage, currentUser }: { setPage: (page: any) => void;
           tipo: newTipo 
         };
         await storageService.saveChecklist(updated);
-        await storageService.addNotification(`Checklist atualizado para placa ${updated.placa}`, 'info');
+        await addNotification('info', `VEÍCULO ${updated.placa} CHECKLIST ATUALIZADO (${newStatus})`);
         fetchChecklists();
       }
       setEditingIndex(null);
@@ -3234,6 +3243,7 @@ function RecebimentoPage({ setPage, currentUser }: { setPage: (page: any) => voi
 }
 
 function DocasPage({ setPage, currentUser }: { setPage: (page: any) => void; currentUser: string }) {
+  const isAdmin = currentUser === 'jeff' || (currentUser && USERS[currentUser]?.role === 'admin');
   const canEdit = ['3clog', 'jeff'].includes(currentUser);
   const [docasItems, setDocasItems] = useState<any[]>([]);
   const [allItems, setAllItems] = useState<EscalaItem[]>([]);
@@ -3391,7 +3401,7 @@ function DocasPage({ setPage, currentUser }: { setPage: (page: any) => void; cur
       await storageService.saveEscalaItem(newItem);
       
       if (isFullyFinished) {
-        addNotification('success', `Veículo ${id} finalizado e movido para Histórico`);
+        addNotification('success', `VEÍCULO ${newItem.cavalo} FINALIZADO (HISTÓRICO)`);
         alert('Veículo finalizado com sucesso! Ele foi movido para o Histórico.');
 
         // Check if all items in the scale group are finished
@@ -3409,12 +3419,18 @@ function DocasPage({ setPage, currentUser }: { setPage: (page: any) => void; cur
           const group = groups.find(g => g.id === scaleGroupId);
           if (group) {
             await storageService.saveScaleGroup({ ...group, status: 'Archived' });
-            addNotification('info', `Escala de ${new Date(allScaleItems[0].data_escala || '').toLocaleDateString('pt-BR')} arquivada automaticamente.`);
+            addNotification('info', `[SISTEMA] Escala de ${new Date(allScaleItems[0].data_escala || '').toLocaleDateString('pt-BR')} | Status: ARQUIVADA AUTOMATICAMENTE | Horário: ${new Date().toLocaleTimeString('pt-BR')}`);
           }
         }
       } else {
-        if (field.includes('doca_number')) {
-          addNotification('neutral', `Veículo ${newItem.cavalo} atribuído à Doca ${value}`);
+        if ((field.includes('doca_number') || field.includes('doca_action')) && value !== '') {
+          const bauPrefix = field.split('_')[0];
+          const docaNumber = newItem[`${bauPrefix}_doca_number`] || 'Sem Doca';
+          const action = newItem[`${bauPrefix}_doca_action`] || 'Aguardando';
+          
+          if (docaNumber !== 'Sem Doca') {
+            addNotification('neutral', `VEÍCULO ${newItem.cavalo} ${docaNumber} (${action})`);
+          }
         }
       }
       
@@ -3494,6 +3510,26 @@ function DocasPage({ setPage, currentUser }: { setPage: (page: any) => void; cur
     }
   };
 
+  const handleResetAllDocks = async () => {
+    if (!window.confirm('Tem certeza que deseja liberar todas as docas ocupadas agora?')) return;
+    
+    try {
+      setLoading(true);
+      await storageService.resetAllDocks();
+      
+      // Log operation
+      await addNotification('warning', `[ADMIN] Operação: RESET GERAL DAS DOCAS | Realizado por: ${isAdmin ? USERS[currentUser]?.name : currentUser} | Horário: ${new Date().toLocaleTimeString('pt-BR')}`);
+      
+      alert('Todas as docas foram liberadas com sucesso!');
+      fetchDocas();
+    } catch (error) {
+      console.error('Failed to reset all docks:', error);
+      alert('Erro ao resetar as docas.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="p-3 md:p-8 space-y-4 md:space-y-6 flex-1 overflow-y-auto bg-coffee-dark">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between border-b border-white/5 pb-4 gap-4">
@@ -3534,6 +3570,16 @@ function DocasPage({ setPage, currentUser }: { setPage: (page: any) => void; cur
               Finalizados
             </button>
           </div>
+
+          {isAdmin && (
+            <button 
+              onClick={handleResetAllDocks}
+              className="flex h-9 px-4 bg-rose-500/10 border border-rose-500/30 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl items-center gap-2 font-black text-[9px] uppercase tracking-widest transition-all"
+            >
+              <Trash2 size={14} /> <span>Limpar Todas as Docas</span>
+            </button>
+          )}
+
           <button 
             onClick={() => setPage('dashboard')}
             className="hidden lg:flex h-9 px-4 bg-white/5 text-slate-400 hover:text-white rounded-xl items-center gap-2 font-black text-[9px] uppercase tracking-widest transition-all"
