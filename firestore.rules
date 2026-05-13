@@ -4,46 +4,55 @@ service cloud.firestore {
     
     // Global helpers
     function isSignedIn() { return request.auth != null; }
-    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
-    function incoming() { return request.resource.data; }
-    function existing() { return resource.data; }
+    function isRole(role) { return request.auth.token.role == role; }
+    function isJeff() { return request.auth.uid == 'jeff' || isRole('jeff'); }
 
     match /{document=**} {
       allow read, write: if false;
     }
 
-    match /scale_groups/{groupId} {
-      allow list, get: if isSignedIn();
-      allow create: if isSignedIn() && isValidId(groupId);
-      allow update: if isSignedIn() && incoming().id == existing().id;
-      allow delete: if isSignedIn();
-    }
-    
-    match /escala_items/{itemId} {
-      allow list, get: if isSignedIn();
-      allow create: if isSignedIn() && isValidId(itemId);
-      allow update: if isSignedIn();
-      allow delete: if isSignedIn();
-    }
-    
-    match /checklists/{placa} {
-      allow list, get: if isSignedIn();
-      allow create: if isSignedIn() && isValidId(placa);
-      allow update: if isSignedIn();
-      allow delete: if isSignedIn();
-    }
-    
-    match /notifications/{notifId} {
-        allow list, get: if isSignedIn();
-        allow create: if isSignedIn();
-        allow delete: if isSignedIn();
+    // users: jeff only
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && isJeff();
     }
 
-    match /chat_messages/{msgId} {
-      allow read: if true;
+    // scale_groups: jeff, gr3c
+    match /scale_groups/{groupId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (isJeff() || isRole('gr3c'));
+    }
+    
+    // escala_items: jeff, 3clog, 3cmot, gr3c (specific fields managed in app, rules can stay broad per role for write)
+    match /escala_items/{itemId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (isJeff() || isRole('3clog') || isRole('3cmot') || isRole('gr3c'));
+    }
+    
+    // checklists: jeff, gr3c
+    match /checklists/{placa} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (isJeff() || isRole('gr3c'));
+    }
+    
+    // notifications: anyone can create, jeff can clear/delete
+    match /notifications/{notifId} {
+      allow read: if isSignedIn();
       allow create: if true;
-      allow update: if true;
-      allow delete: if true;
+      allow update, delete: if isSignedIn() && isJeff();
+    }
+
+    // chat_messages: jeff, 3clog, 3cmot, gr3c
+    match /chat_messages/{msgId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if isSignedIn() && (isJeff() || isRole('3clog') || isRole('3cmot') || isRole('gr3c'));
+    }
+    
+    // company_principles / about: jeff only
+    match /company_principles/{id} {
+      allow read: if true;
+      allow write: if isSignedIn() && isJeff();
     }
   }
 }

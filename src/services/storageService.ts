@@ -84,6 +84,11 @@ export const storageService = {
     });
   },
 
+  async markNotificationAsRead(notificationId: string) {
+    const docRef = doc(db, COLLECTIONS.NOTIFICATIONS, notificationId);
+    await updateDoc(docRef, { read: true });
+  },
+
   async updateChatMessage(id: string, newContent: string) {
     const docRef = doc(db, 'chat_messages', id);
     await updateDoc(docRef, {

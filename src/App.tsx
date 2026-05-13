@@ -44,12 +44,12 @@ const playNotificationSound = async (message: string, soundEnabled: boolean) => 
     }
   }
 
-  // URL pública e segura para teste na Vercel conforme solicitado
-  const soundUrl = 'https://actions.google.com/sounds/v1/alarms/beep_short.ogg';
+  // Som moderno e suave (estilo smartphone) conforme solicitado
+  const soundUrl = 'https://notificationsounds.com/storage/sounds/file-sounds-1150-pristine.mp3';
   
   if (soundUrl) {
     const audio = new Audio(soundUrl);
-    audio.volume = 1.0; // Volume máximo conforme solicitado
+    audio.volume = 0.7; // Volume ajustado para clareza e suavidade
     try {
       await audio.play();
       console.log(`[AUDIO] Playback successful: ${message}`);
@@ -250,28 +250,122 @@ export default function App() {
     };
   }, []);
 
+  const [badges, setBadges] = useState<Record<string, number>>({
+    checklist: 0,
+    escala: 0,
+    veiculos: 0,
+    docas: 0,
+    recebimento: 0,
+    chat: 0
+  });
+
+  // Real-time badges listeners
+  useEffect(() => {
+    if (!currentUser) return;
+
+    // 1. Checklist badges (Negativados or Vencidos)
+    const unsubChecklist = onSnapshot(collection(db, 'checklists'), (snapshot) => {
+      const pending = snapshot.docs.filter(doc => {
+        const data = doc.data();
+        return data.status === 'Negativado' || data.status === 'Checklist Vencido';
+      }).length;
+      setBadges(prev => ({ ...prev, checklist: pending }));
+    });
+
+    // 2. Docas & Veiculos (from Escala Items in Open scales)
+    let unsubEscala: () => void = () => {};
+    const unsubGroups = onSnapshot(collection(db, 'scale_groups'), (groupsSnapshot) => {
+      const openGroupIds = groupsSnapshot.docs
+        .filter(g => g.data().status === 'Open')
+        .map(g => g.id);
+
+      if (unsubEscala) unsubEscala();
+      
+      unsubEscala = onSnapshot(collection(db, 'escala_items'), (escalaSnapshot) => {
+        const docs = escalaSnapshot.docs
+          .map(doc => doc.data())
+          .filter(d => openGroupIds.includes(d.scale_group_id?.toString() || d.scale_group_id));
+        
+        // Occupied Docks: count items assigned to a dock number
+        const occupied = docs.filter(d => (d.bau1_doca_number && d.bau1_doca_number !== '') || (d.bau2_doca_number && d.bau2_doca_number !== '')).length;
+        
+        // Pending vehicles: count those with pending/negative checklist status
+        const pendingVehicles = docs.filter(d => 
+          ['Negativado', 'Checklist Vencido'].includes(d.checklist_status)
+        ).length;
+        
+        setBadges(prev => ({ ...prev, docas: occupied, veiculos: pendingVehicles }));
+      });
+    });
+
+    // 3. Chat unread count
+    const lastTString = localStorage.getItem(`chat_last_read_${currentUser}`) || '0';
+    const lastT = parseInt(lastTString);
+    
+    const chatQuery = query(collection(db, 'chat_messages'), orderBy('timestamp', 'desc'), limit(50));
+    const unsubChat = onSnapshot(chatQuery, (snapshot) => {
+      if (page === 'chat') {
+        setBadges(prev => ({ ...prev, chat: 0 }));
+        if (snapshot.docs.length > 0) {
+          const latest = snapshot.docs[0].data().timestamp?.toMillis() || Date.now();
+          localStorage.setItem(`chat_last_read_${currentUser}`, latest.toString());
+        }
+      } else {
+        const unread = snapshot.docs.filter(doc => {
+          const d = doc.data();
+          const msgT = d.timestamp?.toMillis() || 0;
+          return d.userId !== currentUser && msgT > lastT;
+        }).length;
+        setBadges(prev => ({ ...prev, chat: unread }));
+      }
+    });
+
+    return () => {
+      unsubChecklist();
+      unsubGroups();
+      unsubEscala();
+      unsubChat();
+    };
+  }, [currentUser, page]);
+
+  // RBAC Helper
+  const canUserEdit = (pageId: string) => {
+    if (!currentUser) return false;
+    if (currentUser === 'jeff') return true;
+    
+    const PERMISSIONS: Record<string, string[]> = {
+      '3clog': ['docas', 'recebimento', 'chat'],
+      '3cmot': ['veiculos', 'chat'],
+      'gr3c': ['checklist', 'escala', 'chat'],
+    };
+
+    return (PERMISSIONS[currentUser] || []).includes(pageId);
+  };
+
   const renderPage = () => {
+    const canEdit = canUserEdit(page);
+
     switch (page) {
       case 'dashboard':
-        return <DashboardPage onNavigate={setPage} onLogout={() => setCurrentUser(null)} currentUser={currentUser!} />;
+        return <DashboardPage onNavigate={setPage} onLogout={() => setCurrentUser(null)} currentUser={currentUser!} canEdit={canUserEdit('dashboard')} />;
       case 'escala':
-        return <EscalaPage setPage={setPage} currentUser={currentUser!} />;
+        return <EscalaPage setPage={setPage} currentUser={currentUser!} canEdit={canEdit} />;
       case 'veiculos':
-        return <VeiculosPage setPage={setPage} currentUser={currentUser!} />;
+        return <VeiculosPage setPage={setPage} currentUser={currentUser!} canEdit={canEdit} />;
       case 'docas':
-        return <DocasPage setPage={setPage} currentUser={currentUser!} />;
+        return <DocasPage setPage={setPage} currentUser={currentUser!} canEdit={canEdit} />;
       case 'principios':
-        return <PrincipiosPage setPage={setPage} />;
+        return <PrincipiosPage setPage={setPage} canEdit={canEdit} />;
       case 'checklist':
-        return <ChecklistPage setPage={setPage} currentUser={currentUser!} />;
+        return <ChecklistPage setPage={setPage} currentUser={currentUser!} canEdit={canEdit} />;
       case 'recebimento':
-        return <RecebimentoPage setPage={setPage} currentUser={currentUser!} />;
+        return <RecebimentoPage setPage={setPage} currentUser={currentUser!} canEdit={canEdit} />;
       case 'chat':
-        return <ChatPage setPage={setPage} currentUser={currentUser!} />;
+        return <ChatPage setPage={setPage} currentUser={currentUser!} canEdit={canEdit} />;
       case 'sobre':
-        return <SobrePage setPage={setPage} />;
+        return <SobrePage setPage={setPage} canEdit={canEdit} />;
       default:
-        return <DashboardPage onNavigate={setPage} onLogout={() => setCurrentUser(null)} currentUser={currentUser!} />;
+        return <DashboardPage onNavigate={setPage} onLogout={() => setCurrentUser(null)} currentUser={currentUser!} canEdit={canUserEdit('dashboard')} />;
     }
   };
 
@@ -288,6 +382,7 @@ export default function App() {
         onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
         currentUser={currentUser}
         onLogout={() => setCurrentUser(null)}
+        badges={badges}
       />
       <main className="flex-1 flex flex-col relative">
         <AnimatePresence>
@@ -433,8 +528,7 @@ function LoginPage({ onLoginSuccess }: { onLoginSuccess: (user: string) => void 
   );
 }
 
-function VeiculosPage({ setPage, currentUser }: { setPage: (page: any) => void; currentUser: string }) {
-  const canEdit = ['3cmot', 'jeff'].includes(currentUser);
+function VeiculosPage({ setPage, currentUser, canEdit }: { setPage: (page: any) => void; currentUser: string; canEdit: boolean }) {
   const [escalaItems, setEscalaItems] = useState<EscalaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -649,9 +743,8 @@ function VeiculosPage({ setPage, currentUser }: { setPage: (page: any) => void; 
   );
 }
 
-function DashboardPage({ onNavigate, onLogout, currentUser }: { onNavigate: (page: any) => void; onLogout: () => void; currentUser: string }) {
+function DashboardPage({ onNavigate, onLogout, currentUser, canEdit }: { onNavigate: (page: any) => void; onLogout: () => void; currentUser: string; canEdit: boolean }) {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
-  const isAdmin = currentUser === 'jeff' || (currentUser && USERS[currentUser]?.role === 'admin');
   
   const [soundEnabled, setSoundEnabled] = useState(() => {
     return localStorage.getItem('frota_sound_enabled') !== 'false';
@@ -666,6 +759,7 @@ function DashboardPage({ onNavigate, onLogout, currentUser }: { onNavigate: (pag
   useEffect(() => {
     const q = query(
       collection(db, 'notifications'),
+      where('read', '==', false),
       orderBy('timestamp', 'desc'),
       limit(10)
     );
@@ -710,6 +804,25 @@ function DashboardPage({ onNavigate, onLogout, currentUser }: { onNavigate: (pag
     });
     return () => unsubscribe();
   }, [soundEnabled]);
+
+  const handleNotificationClick = async (notif: AppNotification) => {
+    // 1. Mark as read in Firestore
+    try {
+      await storageService.markNotificationAsRead(notif.id);
+    } catch (error) {
+      console.error('Failed to mark notification as read:', error);
+    }
+
+    // 2. Determine redirection target
+    const msg = notif.message.toUpperCase();
+    if (msg.includes('[CHAT]')) {
+      onNavigate('chat');
+    } else if (msg.includes('VEÍCULO') || msg.includes('DOCA')) {
+      onNavigate('docas');
+    } else if (msg.includes('CHECKLIST')) {
+      onNavigate('checklist');
+    }
+  };
 
   const handleClearNotifications = async () => {
     if (confirm('ATENÇÃO: Deseja apagar TODAS as notificações operacionais?')) {
@@ -766,7 +879,7 @@ function DashboardPage({ onNavigate, onLogout, currentUser }: { onNavigate: (pag
           </div>
           
           <div className="flex items-center gap-2">
-            {isAdmin && (
+            {canEdit && (
               <button 
                 onClick={handleClearNotifications}
                 className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white transition-all"
@@ -813,7 +926,8 @@ function DashboardPage({ onNavigate, onLogout, currentUser }: { onNavigate: (pag
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: idx * 0.1 }}
-                className={`bg-white/5 border-l-2 rounded-r-xl p-4 flex items-start gap-3 relative overflow-hidden group transition-all duration-500 ${
+                onClick={() => handleNotificationClick(notif)}
+                className={`bg-white/5 border-l-2 rounded-r-xl p-4 flex items-start gap-3 relative overflow-hidden group cursor-pointer hover:bg-white/10 hover:shadow-lg hover:shadow-coffee-red/5 active:scale-[0.98] transition-all duration-300 ${
                   notif.isPriority && newNotifIds.has(notif.id) 
                     ? 'border-emerald-500 bg-emerald-500/20 ring-2 ring-emerald-500/50 animate-pulse' 
                     : notif.type === 'success' ? 'border-emerald-500 bg-emerald-500/5' :
@@ -952,7 +1066,7 @@ function DashboardPage({ onNavigate, onLogout, currentUser }: { onNavigate: (pag
 
 // ... (keep existing code)
 
-function SobrePage({ setPage }: { setPage: (page: any) => void }) {
+function SobrePage({ setPage, canEdit }: { setPage: (page: any) => void; canEdit: boolean }) {
   return (
     <div className="p-4 md:p-8 space-y-8 flex-1 overflow-y-auto bg-coffee-dark">
       <div className="flex items-center justify-between border-b border-white/5 pb-4">
@@ -1027,7 +1141,7 @@ function SobrePage({ setPage }: { setPage: (page: any) => void }) {
   );
 }
 
-function PrincipiosPage({ setPage }: { setPage: (page: any) => void }) {
+function PrincipiosPage({ setPage, canEdit }: { setPage: (page: any) => void; canEdit: boolean }) {
   return (
     <div className="p-4 md:p-8 space-y-6 flex-1 overflow-y-auto bg-coffee-dark">
       <div className="flex items-center justify-between border-b border-white/5 pb-4">
@@ -1129,7 +1243,7 @@ const ExpedicaoShiftChart = ({ data }: { data: FrotaItem[] }) => {
   );
 };
 
-function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; currentUser: string }) {
+function ChatPage({ setPage, currentUser, canEdit }: { setPage: (page: any) => void; currentUser: string; canEdit: boolean }) {
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [userProfiles, setUserProfiles] = useState<Record<string, string>>({});
@@ -1265,7 +1379,7 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
           <h1 translate="no" className="text-2xl font-black text-white tracking-tighter">CHAT DA EQUIPE</h1>
         </div>
         <div className="flex items-center gap-3">
-          {isAdmin && (
+          {currentUser === 'jeff' && (
             <button 
               onClick={handleClearChat}
               className="h-9 px-4 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white border border-rose-500/20 rounded-xl flex items-center gap-2 font-black text-[9px] uppercase tracking-widest transition-all shadow-lg shadow-rose-500/10"
@@ -1315,22 +1429,25 @@ function ChatPage({ setPage, currentUser }: { setPage: (page: any) => void; curr
             type="text"
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
-            placeholder="Digite sua mensagem..."
-            className="flex-1 h-12 bg-white/5 border border-white/10 rounded-xl px-4 text-sm text-white focus:ring-1 focus:ring-coffee-red outline-none transition-all placeholder-slate-600"
+            placeholder={canEdit ? "Digite sua mensagem..." : "Você não tem permissão para enviar mensagens"}
+            disabled={!canEdit}
+            className="flex-1 h-12 bg-white/5 border border-white/10 rounded-xl px-4 text-sm text-white focus:ring-1 focus:ring-coffee-red outline-none transition-all placeholder-slate-600 disabled:opacity-50"
           />
-          <button 
-            type="submit"
-            className="w-12 h-12 bg-coffee-red text-white rounded-xl flex items-center justify-center hover:bg-coffee-red/90 transition-all shadow-lg shadow-coffee-red/20"
-          >
-            <Send size={20} />
-          </button>
+          {canEdit && (
+            <button 
+              type="submit"
+              className="w-12 h-12 bg-coffee-red text-white rounded-xl flex items-center justify-center hover:bg-coffee-red/90 transition-all shadow-lg shadow-coffee-red/20"
+            >
+              <Send size={20} />
+            </button>
+          )}
         </form>
       </div>
     </div>
   );
 }
 
-function Sidebar({ currentPage, setPage, collapsed, onToggle, currentUser, onLogout }: { currentPage: string, setPage: (page: any) => void, collapsed: boolean, onToggle: () => void, currentUser: string, onLogout: () => void }) {
+function Sidebar({ currentPage, setPage, collapsed, onToggle, currentUser, onLogout, badges }: { currentPage: string, setPage: (page: any) => void, collapsed: boolean, onToggle: () => void, currentUser: string, onLogout: () => void, badges: Record<string, number> }) {
   const navItems = [
     { id: 'checklist', label: 'Checklist', icon: CheckCircle },
     { id: 'escala', label: 'Escala', icon: Calendar },
@@ -1380,8 +1497,20 @@ function Sidebar({ currentPage, setPage, collapsed, onToggle, currentUser, onLog
             key={item.id}
             onClick={() => setPage(item.id as any)}
             className={`flex items-center gap-3 px-4 py-3 w-full rounded-xl font-black uppercase tracking-tighter text-[10px] transition-all group relative ${collapsed ? 'justify-center' : ''} ${currentPage === item.id ? 'bg-coffee-red text-white shadow-2xl shadow-coffee-red/30' : 'text-slate-500 hover:bg-white/5 hover:text-white'}`}>
-            <item.icon size={16} className={`flex-shrink-0 ${currentPage === item.id ? 'text-white' : 'group-hover:text-coffee-red transition-colors'}`} />
+            <div className="relative">
+              <item.icon size={16} className={`flex-shrink-0 ${currentPage === item.id ? 'text-white' : 'group-hover:text-coffee-red transition-colors'}`} />
+              {badges[item.id] > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-[1rem] px-1 bg-rose-600 text-white text-[8px] font-black items-center justify-center rounded-full border border-slate-950 shadow-lg scale-90">
+                  {badges[item.id] > 99 ? '99+' : badges[item.id]}
+                </span>
+              )}
+            </div>
             {!collapsed && <span translate="no">{item.label}</span>}
+            {!collapsed && badges[item.id] > 0 && (
+              <span className="ml-auto bg-rose-600/20 text-rose-500 text-[8px] font-black px-1.5 py-0.5 rounded-full border border-rose-500/20">
+                {badges[item.id]}
+              </span>
+            )}
           </button>
         ))}
 
@@ -1418,8 +1547,7 @@ interface ScaleGroup {
   created_at: string;
 }
 
-function EscalaPage({ setPage, currentUser }: { setPage: (page: any) => void; currentUser: string }) {
-  const canEdit = ['gr3c', 'jeff'].includes(currentUser);
+function EscalaPage({ setPage, currentUser, canEdit }: { setPage: (page: any) => void; currentUser: string; canEdit: boolean }) {
   const [view, setView] = useState<'list' | 'create' | 'details'>('list');
   const [activeTab, setActiveTab] = useState<'ativas' | 'semanal' | 'checklist_vencido'>('ativas');
   const [scaleGroups, setScaleGroups] = useState<ScaleGroup[]>([]);
@@ -2768,8 +2896,7 @@ const EscalaCard = ({ item, index, isExpanded, onToggle, onUpdate, onEdit, onOpt
   );
 };
 
-function ChecklistPage({ setPage, currentUser }: { setPage: (page: any) => void; currentUser: string }) {
-  const canEdit = ['gr3c', 'jeff'].includes(currentUser);
+function ChecklistPage({ setPage, currentUser, canEdit }: { setPage: (page: any) => void; currentUser: string; canEdit: boolean }) {
   const [checklists, setChecklists] = useState<{ id: string; placa: string; status: string; validade: string | null; tipo: string; created_at: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -3023,7 +3150,7 @@ function ChecklistPage({ setPage, currentUser }: { setPage: (page: any) => void;
   );
 }
 
-const RecebimentoItem = ({ item, activeTab, onUpdate }: { item: EscalaItem; activeTab: string; onUpdate: (id: number, field: string, value: string) => void }) => {
+const RecebimentoItem = ({ item, activeTab, onUpdate, canEdit }: { item: EscalaItem; activeTab: string; onUpdate: (id: number, field: string, value: string) => void; canEdit: boolean }) => {
   const [localNF, setLocalNF] = useState(item.nota_fiscal || '');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -3073,8 +3200,9 @@ const RecebimentoItem = ({ item, activeTab, onUpdate }: { item: EscalaItem; acti
               onKeyDown={(e) => e.key === 'Enter' && handleSaveNF()}
               placeholder="Digite o número da NF..."
               className="flex-1 h-9 bg-white/5 border border-white/10 rounded-lg px-3 text-white text-xs font-medium focus:outline-none focus:border-coffee-red/50"
+              disabled={!canEdit}
             />
-            {localNF !== (item.nota_fiscal || '') && (
+            {canEdit && localNF !== (item.nota_fiscal || '') && (
               <button 
                 onClick={handleSaveNF}
                 className="h-9 px-3 bg-emerald-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest shadow-lg shadow-emerald-500/20 animate-pulse"
@@ -3094,6 +3222,7 @@ const RecebimentoItem = ({ item, activeTab, onUpdate }: { item: EscalaItem; acti
               value={activeTab === 'aguardando' ? (item.danfe_ok || '') : (item.entregue_recebedoria || '')}
               onChange={(e) => onUpdate(item.id, activeTab === 'aguardando' ? 'danfe_ok' : 'entregue_recebedoria', e.target.value)}
               className="w-full h-9 bg-slate-800 border border-white/10 rounded-lg px-2 text-white text-[10px] font-bold uppercase tracking-widest focus:outline-none focus:border-coffee-red/50 appearance-none cursor-pointer"
+              disabled={!canEdit}
             >
               <option value="" className="bg-slate-900">Selecione</option>
               <option value="Sim" className="bg-slate-900">Sim</option>
@@ -3102,7 +3231,7 @@ const RecebimentoItem = ({ item, activeTab, onUpdate }: { item: EscalaItem; acti
           </div>
           
           <div className="flex items-end">
-            {activeTab === 'aguardando' ? (
+            {canEdit && (activeTab === 'aguardando' ? (
               <div className="flex gap-1 w-full">
                 <button 
                   onClick={() => onUpdate(item.id, 'recebimento_status', 'Recebido')}
@@ -3124,7 +3253,7 @@ const RecebimentoItem = ({ item, activeTab, onUpdate }: { item: EscalaItem; acti
               >
                 Voltar
               </button>
-            )}
+            ))}
           </div>
         </div>
       </div>
@@ -3132,7 +3261,7 @@ const RecebimentoItem = ({ item, activeTab, onUpdate }: { item: EscalaItem; acti
   );
 };
 
-function RecebimentoPage({ setPage, currentUser }: { setPage: (page: any) => void; currentUser: string }) {
+function RecebimentoPage({ setPage, currentUser, canEdit }: { setPage: (page: any) => void; currentUser: string; canEdit: boolean }) {
   const [activeTab, setActiveTab] = useState<'aguardando' | 'recebido' | 'pendente'>('aguardando');
   const [items, setItems] = useState<EscalaItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -3257,6 +3386,7 @@ function RecebimentoPage({ setPage, currentUser }: { setPage: (page: any) => voi
               item={item} 
               activeTab={activeTab} 
               onUpdate={handleUpdate} 
+              canEdit={canEdit}
             />
           ))
         )}
@@ -3265,9 +3395,8 @@ function RecebimentoPage({ setPage, currentUser }: { setPage: (page: any) => voi
   );
 }
 
-function DocasPage({ setPage, currentUser }: { setPage: (page: any) => void; currentUser: string }) {
+function DocasPage({ setPage, currentUser, canEdit }: { setPage: (page: any) => void; currentUser: string; canEdit: boolean }) {
   const isAdmin = currentUser === 'jeff' || (currentUser && USERS[currentUser]?.role === 'admin');
-  const canEdit = ['3clog', 'jeff'].includes(currentUser);
   const [docasItems, setDocasItems] = useState<any[]>([]);
   const [allItems, setAllItems] = useState<EscalaItem[]>([]);
   const [finishedVehicles, setFinishedVehicles] = useState<any[]>([]);
@@ -3594,14 +3723,14 @@ function DocasPage({ setPage, currentUser }: { setPage: (page: any) => void; cur
             </button>
           </div>
 
-          {isAdmin && (
-            <button 
-              onClick={handleResetAllDocks}
-              className="flex h-9 px-4 bg-rose-500/10 border border-rose-500/30 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl items-center gap-2 font-black text-[9px] uppercase tracking-widest transition-all"
-            >
-              <Trash2 size={14} /> <span>Limpar Todas as Docas</span>
-            </button>
-          )}
+            {canEdit && (
+              <button 
+                onClick={handleResetAllDocks}
+                className="flex h-9 px-4 bg-rose-500/10 border border-rose-500/30 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl items-center gap-2 font-black text-[9px] uppercase tracking-widest transition-all"
+              >
+                <Trash2 size={14} /> <span>Limpar Todas as Docas</span>
+              </button>
+            )}
 
           <button 
             onClick={() => setPage('dashboard')}
